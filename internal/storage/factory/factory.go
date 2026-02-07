@@ -30,6 +30,7 @@ type Options struct {
 	LockTimeout time.Duration
 
 	// Dolt server connection options
+	ServerMode bool   // Use Dolt SQL server mode instead of embedded
 	ServerHost string // Server host (default: 127.0.0.1)
 	ServerPort int    // Server port (default: 3307)
 	ServerUser string // MySQL user (default: root)
