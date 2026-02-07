@@ -74,7 +74,7 @@ variable.`,
 			os.Exit(1)
 		}
 		if backend == "" {
-			backend = configfile.BackendSQLite // Default to SQLite
+			backend = configfile.BackendDolt // Default to Dolt
 		}
 
 		// Validate server mode requires dolt backend
@@ -437,7 +437,7 @@ variable.`,
 			}
 
 			// Save backend choice (only store if non-default to keep metadata.json clean)
-			if backend != configfile.BackendSQLite {
+			if backend != configfile.BackendDolt {
 				cfg.Backend = backend
 			}
 			// In Dolt mode, metadata.json.database should point to the Dolt directory (not beads.db).
@@ -452,6 +452,22 @@ variable.`,
 				// E.g., prefix "gt" → database "beads_gt", prefix "bd" → database "beads_bd".
 				if prefix != "" {
 					cfg.DoltDatabase = "beads_" + prefix
+				}
+
+				// If --server not explicitly set, inherit from config.yaml global dolt.mode
+				if !serverMode && !cmd.Flags().Changed("server") {
+					if strings.ToLower(config.GetString("dolt.mode")) == configfile.DoltModeServer {
+						serverMode = true
+						if serverHost == "" {
+							serverHost = config.GetString("dolt.server-host")
+						}
+						if serverPort == 0 {
+							serverPort = config.GetInt("dolt.server-port")
+						}
+						if serverUser == "" {
+							serverUser = config.GetString("dolt.server-user")
+						}
+					}
 				}
 
 				// Save server mode configuration (bd-dolt.2.2)
@@ -743,7 +759,7 @@ func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
-	initCmd.Flags().String("backend", "", "Storage backend: sqlite (default) or dolt (version-controlled)")
+	initCmd.Flags().String("backend", "", "Storage backend: dolt (default, version-controlled) or sqlite")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")

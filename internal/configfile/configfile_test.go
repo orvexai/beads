@@ -386,6 +386,60 @@ func TestIsDoltServerModeAlwaysTrue(t *testing.T) {
 	})
 }
 
+// TestGetBackendInference tests that GetBackend infers dolt when backend field
+// is missing but dolt-specific fields are present (e.g., dolt_mode or database="dolt").
+func TestGetBackendInference(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      Config
+		expected string
+	}{
+		{
+			name:     "explicit sqlite backend",
+			cfg:      Config{Backend: BackendSQLite},
+			expected: BackendSQLite,
+		},
+		{
+			name:     "explicit dolt backend",
+			cfg:      Config{Backend: BackendDolt},
+			expected: BackendDolt,
+		},
+		{
+			name:     "empty backend defaults to sqlite",
+			cfg:      Config{Database: "beads.db"},
+			expected: BackendSQLite,
+		},
+		{
+			name:     "infer dolt from database field",
+			cfg:      Config{Database: "dolt"},
+			expected: BackendDolt,
+		},
+		{
+			name:     "infer dolt from dolt_mode server",
+			cfg:      Config{Database: "dolt", DoltMode: DoltModeServer},
+			expected: BackendDolt,
+		},
+		{
+			name:     "infer dolt from dolt_mode embedded",
+			cfg:      Config{DoltMode: DoltModeEmbedded},
+			expected: BackendDolt,
+		},
+		{
+			name:     "infer dolt from dolt_mode alone",
+			cfg:      Config{DoltMode: DoltModeServer, DoltServerHost: "127.0.0.1", DoltServerPort: 3307},
+			expected: BackendDolt,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetBackend()
+			if got != tt.expected {
+				t.Errorf("GetBackend() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
 // TestGetCapabilities tests that GetCapabilities properly handles server mode
 func TestGetCapabilities(t *testing.T) {
 	tests := []struct {

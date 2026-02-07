@@ -856,6 +856,24 @@ var rootCmd = &cobra.Command{
 				}
 			}
 
+			// Fallback: check config.yaml for global dolt.mode default (covers existing databases
+			// that were created before the global config was set)
+			if !opts.ServerMode && strings.ToLower(config.GetString("dolt.mode")) == configfile.DoltModeServer {
+				opts.ServerMode = true
+				if opts.ServerHost == "" {
+					opts.ServerHost = config.GetString("dolt.server-host")
+				}
+				if opts.ServerPort == 0 {
+					opts.ServerPort = config.GetInt("dolt.server-port")
+				}
+				if opts.ServerUser == "" {
+					opts.ServerUser = config.GetString("dolt.server-user")
+				}
+				if opts.Database == "" {
+					opts.Database = config.GetString("dolt.database")
+				}
+			}
+
 			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
 		} else {
 			// SQLite backend

@@ -142,6 +142,22 @@ func Initialize() error {
 	// Values: off | on
 	v.SetDefault("dolt.auto-commit", "on")
 
+	// Global Dolt connection mode (inherited by new databases at init time,
+	// and used as runtime fallback for existing databases without metadata.json settings).
+	// Values: embedded | server
+	v.SetDefault("dolt.mode", "server")
+	v.SetDefault("dolt.server-host", "127.0.0.1")
+	v.SetDefault("dolt.server-port", 3307)
+	v.SetDefault("dolt.server-user", "root")
+	v.SetDefault("dolt.database", "beads")
+
+	// Explicit env var bindings for dolt connection settings
+	_ = v.BindEnv("dolt.mode", "BD_DOLT_MODE")
+	_ = v.BindEnv("dolt.server-host", "BD_DOLT_SERVER_HOST")
+	_ = v.BindEnv("dolt.server-port", "BD_DOLT_SERVER_PORT")
+	_ = v.BindEnv("dolt.server-user", "BD_DOLT_SERVER_USER")
+	_ = v.BindEnv("dolt.database", "BD_DOLT_DATABASE")
+
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "")
 	v.SetDefault("routing.default", ".")

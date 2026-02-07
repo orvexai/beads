@@ -4,8 +4,10 @@ package factory
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -102,6 +104,25 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 		if opts.Database == "" {
 			opts.Database = cfg.GetDoltDatabase()
 		}
+
+		// Fallback: check config.yaml for global dolt.mode default (covers existing databases
+		// that were created before the global config was set, e.g. daemon code path)
+		if !opts.ServerMode && strings.ToLower(config.GetString("dolt.mode")) == configfile.DoltModeServer {
+			opts.ServerMode = true
+			if opts.ServerHost == "" {
+				opts.ServerHost = config.GetString("dolt.server-host")
+			}
+			if opts.ServerPort == 0 {
+				opts.ServerPort = config.GetInt("dolt.server-port")
+			}
+			if opts.ServerUser == "" {
+				opts.ServerUser = config.GetString("dolt.server-user")
+			}
+			if opts.Database == "" {
+				opts.Database = config.GetString("dolt.database")
+			}
+		}
+
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	default:
 		return nil, fmt.Errorf("unknown storage backend in config: %s", backend)

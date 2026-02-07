@@ -197,11 +197,17 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 }
 
 // GetBackend returns the configured backend type, defaulting to SQLite.
+// When the explicit "backend" field is missing, it infers dolt if dolt-specific
+// fields are present (e.g., dolt_mode is set, or database is "dolt").
 func (c *Config) GetBackend() string {
-	if c.Backend == "" {
-		return BackendSQLite
+	if c.Backend != "" {
+		return c.Backend
 	}
-	return c.Backend
+	// Infer dolt backend from dolt-specific fields
+	if c.DoltMode != "" || c.Database == BackendDolt {
+		return BackendDolt
+	}
+	return BackendSQLite
 }
 
 // Dolt mode constants
