@@ -372,6 +372,17 @@ variable.`,
 			os.Exit(1)
 		}
 
+		// Dolt backend defaults to dolt-native sync mode (Dolt is source of truth,
+		// JSONL is export-only backup). This skips JSONL staleness checks that would
+		// otherwise block operations with "Database out of sync with JSONL" errors.
+		if backend == configfile.BackendDolt {
+			if err := SetSyncMode(ctx, store, SyncModeDoltNative); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to set sync mode: %v\n", err)
+				_ = store.Close()
+				os.Exit(1)
+			}
+		}
+
 		// === TRACKING METADATA (Pattern B: Warn and Continue) ===
 		// Tracking metadata enhances functionality (diagnostics, version checks, collision detection)
 		// but the system works without it. Failures here degrade gracefully - we warn but continue.

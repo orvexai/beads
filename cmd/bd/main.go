@@ -901,6 +901,21 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Dolt backend: ensure sync.mode=dolt-native is set.
+		// Existing dolt projects created before this auto-set was added may still
+		// have the default git-portable mode, which causes spurious "Database out
+		// of sync with JSONL" errors since Dolt is the source of truth.
+		if backend == configfile.BackendDolt && !useReadOnly {
+			mode, _ := store.GetConfig(rootCtx, SyncModeConfigKey)
+			if mode == "" || mode == SyncModeGitPortable {
+				if err := store.SetConfig(rootCtx, SyncModeConfigKey, SyncModeDoltNative); err != nil {
+					debug.Logf("warning: failed to auto-set sync.mode=dolt-native: %v", err)
+				} else {
+					debug.Logf("auto-set sync.mode=dolt-native for dolt backend")
+				}
+			}
+		}
+
 		// Mark store as active for flush goroutine safety
 		storeMutex.Lock()
 		storeActive = true
