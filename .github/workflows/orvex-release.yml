@@ -9,6 +9,17 @@ name: Orvex Release
 # level (a GitHub setting, not tracked in git) and adds this one new file. A
 # new file has no upstream counterpart, so merging upstream stays conflict-free.
 #
+# Two entry points, one build definition:
+#   * push of a v* tag        -- builds that tag
+#   * workflow_call(tag: ...) -- used by orvex-upstream-sync.yml, which cannot
+#     rely on a tag-push event because pushes made with GITHUB_TOKEN do not
+#     trigger workflows. It passes the tag and the build happens in that run.
+#
+# Platforms: linux (amd64/arm64), windows (amd64/arm64), freebsd, android.
+# macOS is deliberately absent -- .goreleaser.yml carries no darwin target
+# because embedded Dolt needs CGO, which upstream builds on a dedicated macOS
+# runner. It cannot be produced on a Linux runner, so it is out of scope here.
+#
 # Publishing note: .goreleaser.yml hardcodes `release.github.owner: gastownhall`.
 # GoReleaser therefore runs with --skip=publish and MUST NOT be given a publish
 # path; the GitHub Release is cut against this repository afterwards with `gh`.
@@ -18,9 +29,20 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.2.2)'
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to build'
+        type: string
+        required: true
 
 concurrency:
-  group: orvex-release-${{ github.ref }}
+  group: orvex-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -35,11 +57,18 @@ jobs:
     name: Build and release
     # Belt-and-braces: if this branch is ever merged anywhere else, stay inert.
     if: ${{ github.repository == 'orvexai/beads' }}
-    runs-on: ubuntu-latest
+    # Self-hosted ARC pool shared with orvex-wiki, not GitHub-hosted runners.
+    runs-on: public-runners
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - name: Checkout
+      - name: Checkout the tag being released
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
+          # A tag pushed here arrives as github.ref; a tag handed over by the
+          # sync workflow arrives as inputs.tag. GoReleaser derives the version
+          # from git, so the full history and the tag ref both have to be here.
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: Set up Go
@@ -48,12 +77,12 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Verify tag matches cmd/bd/version.go
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          tag_version="${RELEASE_TAG#v}"
           code_version="$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')"
           if [ "$tag_version" != "$code_version" ]; then
-            echo "ERROR: tag v$tag_version does not match cmd/bd/version.go ($code_version)" >&2
+            echo "::error::tag $RELEASE_TAG does not match cmd/bd/version.go ($code_version)"
             exit 1
           fi
           echo "OK: tag and version.go agree on $code_version"
@@ -61,8 +90,24 @@ jobs:
       - name: Install cross-compilation toolchains and signing tools
         timeout-minutes: 13
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
+          set -euo pipefail
+          # ARC runners are containers: some run as root with no sudo binary,
+          # others as a non-root user with passwordless sudo. Support both
+          # rather than assuming the GitHub-hosted layout.
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          elif command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            echo "::error::need root or sudo to install toolchains (user: $(id -un))"
+            exit 1
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y \
+            gcc g++ \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+            gcc-aarch64-linux-gnu \
+            osslsigncode
 
       - name: Install go-winres for Windows PE resource embedding
         run: go install github.com/tc-hib/go-winres@latest
@@ -81,7 +126,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bd-${{ github.ref_name }}
+          name: bd-${{ inputs.tag || github.ref_name }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -90,26 +135,27 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release on this fork
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           assets=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
-          # Idempotent: the tag is force-moved during fork releases, so a
-          # release for this tag may already exist from an earlier run.
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME exists; replacing its assets."
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+          # Idempotent: a tag can be re-pointed and rebuilt on this fork, so a
+          # release for it may already exist from an earlier run.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG exists; replacing its assets."
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             notes="$(printf '%s\n' \
-              "Fork build of beads $GITHUB_REF_NAME from \`$GITHUB_SHA\`." \
+              "Fork build of beads $RELEASE_TAG from \`$GITHUB_SHA\`." \
               "" \
-              "Built by \`.github/workflows/orvex-release.yml\` on the \`orvex\` branch." \
-              "Not an upstream gastownhall/beads release.")"
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              "Linux (amd64/arm64), Windows (amd64/arm64), FreeBSD and Android binaries." \
+              "No macOS build: embedded Dolt needs CGO, which cannot be cross-compiled here." \
+              "" \
+              "Built by \`.github/workflows/orvex-release.yml\`. Not an upstream release.")"
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" \
+              --title "$RELEASE_TAG" \
               --notes "$notes"
           fi
