@@ -107,7 +107,43 @@ jobs:
             gcc g++ \
             gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
             gcc-aarch64-linux-gnu \
-            osslsigncode
+            osslsigncode \
+            curl ca-certificates
+
+      - name: Ensure GitHub CLI is available
+        # GitHub-hosted images ship gh; these self-hosted ARC containers do not,
+        # which is what failed the publish step of the first green build. Checked
+        # here rather than at publish time so a broken release path costs a
+        # minute instead of a full cross-compile. Pinned by version + sha256,
+        # matching the DOLT_TEST_RUNTIME_SHA256 convention in migration-test.yml.
+        env:
+          GH_CLI_VERSION: '2.98.0'
+          GH_CLI_SHA256_amd64: '3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de'
+          GH_CLI_SHA256_arm64: 'cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86'
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already present: $(gh --version | head -1)"
+            exit 0
+          fi
+          arch="$(dpkg --print-architecture)"
+          case "$arch" in
+            amd64) want="$GH_CLI_SHA256_amd64" ;;
+            arm64) want="$GH_CLI_SHA256_arm64" ;;
+            *) echo "::error::no pinned gh build for architecture $arch"; exit 1 ;;
+          esac
+          tarball="gh_${GH_CLI_VERSION}_linux_${arch}.tar.gz"
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 3 --retry-delay 5 \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${tarball}" \
+            -o "$tmp/$tarball"
+          echo "$want  $tmp/$tarball" | sha256sum -c -
+          tar -xzf "$tmp/$tarball" -C "$tmp"
+          # Installed under HOME so this needs no root, unlike the apt step.
+          mkdir -p "$HOME/.local/bin"
+          mv "$tmp/gh_${GH_CLI_VERSION}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version | head -1
 
       - name: Install go-winres for Windows PE resource embedding
         run: go install github.com/tc-hib/go-winres@latest
@@ -148,7 +184,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             notes="$(printf '%s\n' \
-              "Fork build of beads $RELEASE_TAG from \`$GITHUB_SHA\`." \
+              "Fork build of beads $RELEASE_TAG from \`$(git rev-parse HEAD)\`." \
               "" \
               "Linux (amd64/arm64), Windows (amd64/arm64), FreeBSD and Android binaries." \
               "No macOS build: embedded Dolt needs CGO, which cannot be cross-compiled here." \
