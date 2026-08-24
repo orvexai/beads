@@ -1,0 +1,115 @@
+name: Orvex Release
+
+# Fork-local release pipeline for orvexai/beads.
+#
+# Why this file exists: every job in the upstream release.yml is gated on
+# `github.repository == 'gastownhall/beads'`, so a tag pushed here builds
+# nothing. Rather than edit those gates -- which would conflict on every
+# upstream pull -- this fork disables the upstream workflows at the repository
+# level (a GitHub setting, not tracked in git) and adds this one new file. A
+# new file has no upstream counterpart, so merging upstream stays conflict-free.
+#
+# Publishing note: .goreleaser.yml hardcodes `release.github.owner: gastownhall`.
+# GoReleaser therefore runs with --skip=publish and MUST NOT be given a publish
+# path; the GitHub Release is cut against this repository afterwards with `gh`.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: orvex-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  BD_DISABLE_METRICS: "1"
+  BD_DISABLE_EVENT_FLUSH: "1"
+
+jobs:
+  build:
+    name: Build and release
+    # Belt-and-braces: if this branch is ever merged anywhere else, stay inert.
+    if: ${{ github.repository == 'orvexai/beads' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Verify tag matches cmd/bd/version.go
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          code_version="$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "$tag_version" != "$code_version" ]; then
+            echo "ERROR: tag v$tag_version does not match cmd/bd/version.go ($code_version)" >&2
+            exit 1
+          fi
+          echo "OK: tag and version.go agree on $code_version"
+
+      - name: Install cross-compilation toolchains and signing tools
+        timeout-minutes: 13
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
+
+      - name: Install go-winres for Windows PE resource embedding
+        run: go install github.com/tc-hib/go-winres@latest
+
+      - name: Run GoReleaser (build only -- never publishes to gastownhall)
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean --parallelism 1 --skip=publish --skip=announce
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Uploaded before the release step so a failure there still leaves the
+      # binaries retrievable from the run.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bd-${{ github.ref_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release on this fork
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
+          # Idempotent: the tag is force-moved during fork releases, so a
+          # release for this tag may already exist from an earlier run.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME exists; replacing its assets."
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            notes="$(printf '%s\n' \
+              "Fork build of beads $GITHUB_REF_NAME from \`$GITHUB_SHA\`." \
+              "" \
+              "Built by \`.github/workflows/orvex-release.yml\` on the \`orvex\` branch." \
+              "Not an upstream gastownhall/beads release.")"
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "$notes"
+          fi
