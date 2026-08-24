@@ -146,7 +146,22 @@ jobs:
           "$HOME/.local/bin/gh" --version | head -1
 
       - name: Install go-winres for Windows PE resource embedding
-        run: go install github.com/tc-hib/go-winres@latest
+        # Retried: this is an unattended daily pipeline, and a transient
+        # proxy.golang.org stream error (seen once here) otherwise throws away
+        # the whole release. Mirrors the apt retry upstream's release.yml uses.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if go install github.com/tc-hib/go-winres@latest; then
+              exit 0
+            fi
+            echo "::warning::go-winres install attempt $attempt failed"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          echo "::error::go-winres install failed after 3 attempts"
+          exit 1
 
       - name: Run GoReleaser (build only -- never publishes to gastownhall)
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
