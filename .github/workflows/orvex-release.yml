@@ -15,10 +15,9 @@ name: Orvex Release
 #     rely on a tag-push event because pushes made with GITHUB_TOKEN do not
 #     trigger workflows. It passes the tag and the build happens in that run.
 #
-# Platforms: linux (amd64/arm64), windows (amd64/arm64), freebsd, android.
-# macOS is deliberately absent -- .goreleaser.yml carries no darwin target
-# because embedded Dolt needs CGO, which upstream builds on a dedicated macOS
-# runner. It cannot be produced on a Linux runner, so it is out of scope here.
+# Platforms: linux (amd64/arm64), macOS (amd64/arm64), windows (amd64/arm64),
+# freebsd, android. Linux/Windows/FreeBSD/Android use GoReleaser on the ARC
+# runner; macOS uses a dedicated native runner because embedded Dolt needs CGO.
 #
 # Publishing note: .goreleaser.yml hardcodes `release.github.owner: gastownhall`.
 # GoReleaser therefore runs with --skip=publish and MUST NOT be given a publish
@@ -201,8 +200,7 @@ jobs:
             notes="$(printf '%s\n' \
               "Fork build of beads $RELEASE_TAG from \`$(git rev-parse HEAD)\`." \
               "" \
-              "Linux (amd64/arm64), Windows (amd64/arm64), FreeBSD and Android binaries." \
-              "No macOS build: embedded Dolt needs CGO, which cannot be cross-compiled here." \
+              "Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64/arm64), FreeBSD and Android binaries." \
               "" \
               "Built by \`.github/workflows/orvex-release.yml\`. Not an upstream release.")"
             gh release create "$RELEASE_TAG" "${assets[@]}" \
@@ -210,3 +208,127 @@ jobs:
               --title "$RELEASE_TAG" \
               --notes "$notes"
           fi
+
+  macos:
+    name: Build and publish macOS
+    # The fork's GoReleaser config intentionally excludes Darwin because
+    # embedded Dolt needs CGO; build both macOS architectures on a native
+    # macOS runner and append the archives to the release created above.
+    if: ${{ github.repository == 'orvexai/beads' }}
+    needs: build
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout the tag being released
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build darwin/arm64
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: arm64
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          go build -tags "gms_pure_go netgo" \
+            -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Build=$(git rev-parse --short HEAD) -X main.Commit=$(git rev-parse HEAD) -X main.Branch=$(git branch --show-current)" \
+            -o bd-darwin-arm64 ./cmd/bd
+          ./scripts/verify-cgo.sh bd-darwin-arm64
+          if otool -L bd-darwin-arm64 | grep -qi icu; then
+            echo "ERROR: bd-darwin-arm64 has unexpected ICU runtime dependency" >&2
+            otool -L bd-darwin-arm64 >&2
+            exit 1
+          fi
+          codesign -s - -f bd-darwin-arm64
+
+      - name: Build darwin/amd64
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: amd64
+          GOOS: darwin
+          # macos-latest is arm64; cross-compile CGO C code for x86_64.
+          CC: clang -arch x86_64
+          CXX: clang++ -arch x86_64
+        run: |
+          set -euo pipefail
+          go build -tags "gms_pure_go netgo" \
+            -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Build=$(git rev-parse --short HEAD) -X main.Commit=$(git rev-parse HEAD) -X main.Branch=$(git branch --show-current)" \
+            -o bd-darwin-amd64 ./cmd/bd
+          ./scripts/verify-cgo.sh bd-darwin-amd64
+          if otool -L bd-darwin-amd64 | grep -qi icu; then
+            echo "ERROR: bd-darwin-amd64 has unexpected ICU runtime dependency" >&2
+            otool -L bd-darwin-amd64 >&2
+            exit 1
+          fi
+          codesign -s - -f bd-darwin-amd64
+
+      - name: Smoke test embedded Dolt (arm64 native)
+        run: |
+          set -euo pipefail
+          bd="$(pwd)/bd-darwin-arm64"
+          tmpdir="$(mktemp -d)"
+          projdir="$tmpdir/smoketest"
+          mkdir -p "$projdir"
+          cd "$projdir"
+          git init -b main
+          git config user.name "CI"
+          git config user.email "ci@test"
+          git commit --allow-empty -m "init"
+          "$bd" init --prefix smoketest
+          "$bd" create "smoke test" --type task
+          "$bd" list | grep -q "smoke test"
+          if pgrep -f "dolt sql-server" >/dev/null 2>&1; then
+            echo "ERROR: unexpected dolt sql-server process running" >&2
+            exit 1
+          fi
+          echo "OK: embedded dolt smoke test passed"
+
+      - name: Package macOS archives
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          : > darwin-checksums.txt
+          for arch in arm64 amd64; do
+            staging="beads_${version}_darwin_${arch}"
+            mkdir -p "$staging"
+            cp "bd-darwin-${arch}" "$staging/bd"
+            cp LICENSE README.md CHANGELOG.md "$staging/"
+            tar -czf "${staging}.tar.gz" -C "$staging" .
+            shasum -a 256 "${staging}.tar.gz" >> darwin-checksums.txt
+          done
+
+      - name: Upload macOS archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          for arch in arm64 amd64; do
+            gh release upload "v${version}" "beads_${version}_darwin_${arch}.tar.gz" --clobber
+          done
+
+      - name: Append macOS checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          checksum_dir="$(mktemp -d)"
+          gh release download "v${version}" --pattern checksums.txt --dir "$checksum_dir"
+          checksum_file="$checksum_dir/checksums.txt"
+          grep -vE 'beads_[^ ]+_darwin_(arm64|amd64)\.tar\.gz' "$checksum_file" > "$checksum_file.tmp" || true
+          cat darwin-checksums.txt >> "$checksum_file.tmp"
+          mv "$checksum_file.tmp" "$checksum_file"
+          gh release upload "v${version}" "$checksum_file" --clobber
