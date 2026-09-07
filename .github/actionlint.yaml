@@ -1,0 +1,4 @@
+# Declare the custom ARC label used by the fork-local release workflows.
+self-hosted-runner:
+  labels:
+    - public-runners

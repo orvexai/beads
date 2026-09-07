@@ -1,0 +1,161 @@
+name: Orvex Upstream Sync
+
+# Pulls upstream (gastownhall/beads) once a day: fast-forwards main, merges
+# upstream into the orvex branch, copies over every tag this fork does not yet
+# have, and releases the newest stable one.
+#
+# Three things this file is deliberately careful about:
+#
+#  1. "New tag" means a tag NAME that origin does not have -- never a content
+#     comparison. This fork re-points tags on purpose (v1.2.2 points at the
+#     current line, not upstream's recovery release), so a content-based sync
+#     with --force would silently drag those back to the upstream commit.
+#     Existing tags are never fetched, never moved, never force-pushed.
+#
+#  2. Only the newest STABLE new tag is built. Prereleases (anything with a
+#     hyphen: v1.2.2-rc.1) are copied over but not released, matching the
+#     upstream publish gates. Sorting is `sort -V`, because -v:refname order
+#     ranks v1.2.2-rc.1 ABOVE v1.2.2 and would release the RC.
+#
+#  3. The build runs in THIS run via workflow_call, not by relying on the tag
+#     push to fire orvex-release.yml. A push made with GITHUB_TOKEN does not
+#     trigger workflows, so an event-driven handoff would silently never build.
+#
+# Note this workflow only ever fires from the repository default branch, which
+# is why the fork's default branch is `orvex` -- `main` carries no workflow.
+
+on:
+  schedule:
+    # 04:23 UTC daily -- off-the-hour, since on-the-hour cron slots are the
+    # most contended and the most likely to be delayed.
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: orvex-upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_URL: https://github.com/gastownhall/beads.git
+
+jobs:
+  sync:
+    name: Pull upstream tags
+    if: ${{ github.repository == 'orvexai/beads' }}
+    runs-on: public-runners
+    outputs:
+      new_tag: ${{ steps.pick.outputs.new_tag }}
+      new_count: ${{ steps.diff.outputs.count }}
+    steps:
+      - name: Checkout orvex
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: orvex
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null \
+            || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          git config user.name  "orvex-release-bot"
+          git config user.email "orvex-release-bot@users.noreply.github.com"
+
+      - name: Find tags upstream has that this fork does not
+        id: diff
+        run: |
+          set -euo pipefail
+          # Names only, peeled refs stripped. LC_ALL=C on both sides so `comm`
+          # sees one collation order.
+          list_tags() {
+            git ls-remote --tags "$1" \
+              | grep -v '\^{}$' \
+              | sed 's#.*refs/tags/##' \
+              | LC_ALL=C sort -u
+          }
+          list_tags upstream > upstream_tags.txt
+          list_tags origin   > origin_tags.txt
+          LC_ALL=C comm -23 upstream_tags.txt origin_tags.txt > new_tags.txt || true
+          count="$(grep -c . new_tags.txt || true)"
+          echo "count=${count:-0}" >> "$GITHUB_OUTPUT"
+          echo "Upstream tags: $(grep -c . upstream_tags.txt || true)"
+          echo "Fork tags:     $(grep -c . origin_tags.txt || true)"
+          echo "New tags:      ${count:-0}"
+          if [ "${count:-0}" -gt 0 ]; then sed 's/^/  + /' new_tags.txt; fi
+
+      - name: Fast-forward main from upstream
+        # Non-fatal: main is a convenience mirror here. --ff-only means a main
+        # that has diverged is reported, never rewritten.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main || true
+          if git merge-base --is-ancestor origin/main upstream/main; then
+            git push origin "upstream/main:refs/heads/main"
+            echo "main fast-forwarded to $(git rev-parse --short upstream/main)"
+          else
+            echo "::warning::main has diverged from upstream/main; left untouched"
+          fi
+
+      - name: Merge upstream into orvex
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "orvex already contains upstream/main; nothing to merge."
+            exit 0
+          fi
+          # orvex is main plus added-only files, so this is expected to be
+          # conflict-free. A conflict means that assumption broke and is worth
+          # failing loudly for rather than resolving automatically.
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::merging upstream/main into orvex conflicted; resolve by hand"
+            git merge --abort || true
+            exit 1
+          fi
+          git push origin HEAD:refs/heads/orvex
+          echo "orvex updated to $(git rev-parse --short HEAD)"
+
+      - name: Copy new tags to this fork
+        if: ${{ steps.diff.outputs.count != '0' }}
+        run: |
+          set -euo pipefail
+          # Fetched one at a time and only when the name is absent from origin,
+          # so an existing tag can never be clobbered by an upstream one.
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            git fetch upstream "refs/tags/$tag:refs/tags/$tag"
+            git push origin "refs/tags/$tag"
+            echo "pushed $tag"
+          done < new_tags.txt
+
+      - name: Pick the newest stable new tag
+        id: pick
+        run: |
+          set -euo pipefail
+          latest=""
+          if [ -s new_tags.txt ]; then
+            # Drop prereleases (any hyphen), then true version sort.
+            # sed, not `grep -v -- '-'`: the latter is parsed as "read stdin"
+            # by some grep implementations and silently filters nothing.
+            latest="$(sed '/-/d' new_tags.txt | grep . | LC_ALL=C sort -V | tail -1 || true)"
+          fi
+          echo "new_tag=$latest" >> "$GITHUB_OUTPUT"
+          if [ -n "$latest" ]; then
+            echo "Will release: $latest"
+          else
+            echo "No new stable tag to release."
+          fi
+
+  release:
+    name: Release newest tag
+    needs: sync
+    if: ${{ needs.sync.outputs.new_tag != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/orvex-release.yml
+    with:
+      tag: ${{ needs.sync.outputs.new_tag }}

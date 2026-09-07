@@ -1,0 +1,334 @@
+name: Orvex Release
+
+# Fork-local release pipeline for orvexai/beads.
+#
+# Why this file exists: every job in the upstream release.yml is gated on
+# `github.repository == 'gastownhall/beads'`, so a tag pushed here builds
+# nothing. Rather than edit those gates -- which would conflict on every
+# upstream pull -- this fork disables the upstream workflows at the repository
+# level (a GitHub setting, not tracked in git) and adds this one new file. A
+# new file has no upstream counterpart, so merging upstream stays conflict-free.
+#
+# Two entry points, one build definition:
+#   * push of a v* tag        -- builds that tag
+#   * workflow_call(tag: ...) -- used by orvex-upstream-sync.yml, which cannot
+#     rely on a tag-push event because pushes made with GITHUB_TOKEN do not
+#     trigger workflows. It passes the tag and the build happens in that run.
+#
+# Platforms: linux (amd64/arm64), macOS (amd64/arm64), windows (amd64/arm64),
+# freebsd, android. Linux/Windows/FreeBSD/Android use GoReleaser on the ARC
+# runner; macOS uses a dedicated native runner because embedded Dolt needs CGO.
+#
+# Publishing note: .goreleaser.yml hardcodes `release.github.owner: gastownhall`.
+# GoReleaser therefore runs with --skip=publish and MUST NOT be given a publish
+# path; the GitHub Release is cut against this repository afterwards with `gh`.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.2.2)'
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to build'
+        type: string
+        required: true
+
+concurrency:
+  group: orvex-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  BD_DISABLE_METRICS: "1"
+  BD_DISABLE_EVENT_FLUSH: "1"
+
+jobs:
+  build:
+    name: Build and release
+    # Belt-and-braces: if this branch is ever merged anywhere else, stay inert.
+    if: ${{ github.repository == 'orvexai/beads' }}
+    # Self-hosted ARC pool shared with orvex-wiki, not GitHub-hosted runners.
+    runs-on: public-runners
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout the tag being released
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # A tag pushed here arrives as github.ref; a tag handed over by the
+          # sync workflow arrives as inputs.tag. GoReleaser derives the version
+          # from git, so the full history and the tag ref both have to be here.
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Verify tag matches cmd/bd/version.go
+        run: |
+          set -euo pipefail
+          tag_version="${RELEASE_TAG#v}"
+          code_version="$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "$tag_version" != "$code_version" ]; then
+            echo "::error::tag $RELEASE_TAG does not match cmd/bd/version.go ($code_version)"
+            exit 1
+          fi
+          echo "OK: tag and version.go agree on $code_version"
+
+      - name: Install cross-compilation toolchains and signing tools
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          # ARC runners are containers: some run as root with no sudo binary,
+          # others as a non-root user with passwordless sudo. Support both
+          # rather than assuming the GitHub-hosted layout.
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          elif command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            echo "::error::need root or sudo to install toolchains (user: $(id -un))"
+            exit 1
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y \
+            gcc g++ \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+            gcc-aarch64-linux-gnu \
+            osslsigncode \
+            curl ca-certificates
+
+      - name: Ensure GitHub CLI is available
+        # GitHub-hosted images ship gh; these self-hosted ARC containers do not,
+        # which is what failed the publish step of the first green build. Checked
+        # here rather than at publish time so a broken release path costs a
+        # minute instead of a full cross-compile. Pinned by version + sha256,
+        # matching the DOLT_TEST_RUNTIME_SHA256 convention in migration-test.yml.
+        env:
+          GH_CLI_VERSION: '2.98.0'
+          GH_CLI_SHA256_amd64: '3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de'
+          GH_CLI_SHA256_arm64: 'cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86'
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already present: $(gh --version | head -1)"
+            exit 0
+          fi
+          arch="$(dpkg --print-architecture)"
+          case "$arch" in
+            amd64) want="$GH_CLI_SHA256_amd64" ;;
+            arm64) want="$GH_CLI_SHA256_arm64" ;;
+            *) echo "::error::no pinned gh build for architecture $arch"; exit 1 ;;
+          esac
+          tarball="gh_${GH_CLI_VERSION}_linux_${arch}.tar.gz"
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 3 --retry-delay 5 \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${tarball}" \
+            -o "$tmp/$tarball"
+          echo "$want  $tmp/$tarball" | sha256sum -c -
+          tar -xzf "$tmp/$tarball" -C "$tmp"
+          # Installed under HOME so this needs no root, unlike the apt step.
+          mkdir -p "$HOME/.local/bin"
+          mv "$tmp/gh_${GH_CLI_VERSION}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version | head -1
+
+      - name: Install go-winres for Windows PE resource embedding
+        # Retried: this is an unattended daily pipeline, and a transient
+        # proxy.golang.org stream error (seen once here) otherwise throws away
+        # the whole release. Mirrors the apt retry upstream's release.yml uses.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if go install github.com/tc-hib/go-winres@latest; then
+              exit 0
+            fi
+            echo "::warning::go-winres install attempt $attempt failed"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          echo "::error::go-winres install failed after 3 attempts"
+          exit 1
+
+      - name: Run GoReleaser (build only -- never publishes to gastownhall)
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean --parallelism 1 --skip=publish --skip=announce
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Uploaded before the release step so a failure there still leaves the
+      # binaries retrievable from the run.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bd-${{ inputs.tag || github.ref_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release on this fork
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
+          # Idempotent: a tag can be re-pointed and rebuilt on this fork, so a
+          # release for it may already exist from an earlier run.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG exists; replacing its assets."
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            notes="$(printf '%s\n' \
+              "Fork build of beads $RELEASE_TAG from \`$(git rev-parse HEAD)\`." \
+              "" \
+              "Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64/arm64), FreeBSD and Android binaries." \
+              "" \
+              "Built by \`.github/workflows/orvex-release.yml\`. Not an upstream release.")"
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes "$notes"
+          fi
+
+  macos:
+    name: Build and publish macOS
+    # The fork's GoReleaser config intentionally excludes Darwin because
+    # embedded Dolt needs CGO; build both macOS architectures on a native
+    # macOS runner and append the archives to the release created above.
+    if: ${{ github.repository == 'orvexai/beads' }}
+    needs: build
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout the tag being released
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build darwin/arm64
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: arm64
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          go build -tags "gms_pure_go netgo" \
+            -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Build=$(git rev-parse --short HEAD) -X main.Commit=$(git rev-parse HEAD) -X main.Branch=$(git branch --show-current)" \
+            -o bd-darwin-arm64 ./cmd/bd
+          ./scripts/verify-cgo.sh bd-darwin-arm64
+          if otool -L bd-darwin-arm64 | grep -qi icu; then
+            echo "ERROR: bd-darwin-arm64 has unexpected ICU runtime dependency" >&2
+            otool -L bd-darwin-arm64 >&2
+            exit 1
+          fi
+          codesign -s - -f bd-darwin-arm64
+
+      - name: Build darwin/amd64
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: amd64
+          GOOS: darwin
+          # macos-latest is arm64; cross-compile CGO C code for x86_64.
+          CC: clang -arch x86_64
+          CXX: clang++ -arch x86_64
+        run: |
+          set -euo pipefail
+          go build -tags "gms_pure_go netgo" \
+            -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Build=$(git rev-parse --short HEAD) -X main.Commit=$(git rev-parse HEAD) -X main.Branch=$(git branch --show-current)" \
+            -o bd-darwin-amd64 ./cmd/bd
+          ./scripts/verify-cgo.sh bd-darwin-amd64
+          if otool -L bd-darwin-amd64 | grep -qi icu; then
+            echo "ERROR: bd-darwin-amd64 has unexpected ICU runtime dependency" >&2
+            otool -L bd-darwin-amd64 >&2
+            exit 1
+          fi
+          codesign -s - -f bd-darwin-amd64
+
+      - name: Smoke test embedded Dolt (arm64 native)
+        run: |
+          set -euo pipefail
+          bd="$(pwd)/bd-darwin-arm64"
+          tmpdir="$(mktemp -d)"
+          projdir="$tmpdir/smoketest"
+          mkdir -p "$projdir"
+          cd "$projdir"
+          git init -b main
+          git config user.name "CI"
+          git config user.email "ci@test"
+          git commit --allow-empty -m "init"
+          "$bd" init --prefix smoketest
+          "$bd" create "smoke test" --type task
+          "$bd" list | grep -q "smoke test"
+          if pgrep -f "dolt sql-server" >/dev/null 2>&1; then
+            echo "ERROR: unexpected dolt sql-server process running" >&2
+            exit 1
+          fi
+          echo "OK: embedded dolt smoke test passed"
+
+      - name: Package macOS archives
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          : > darwin-checksums.txt
+          for arch in arm64 amd64; do
+            staging="beads_${version}_darwin_${arch}"
+            mkdir -p "$staging"
+            cp "bd-darwin-${arch}" "$staging/bd"
+            cp LICENSE README.md CHANGELOG.md "$staging/"
+            tar -czf "${staging}.tar.gz" -C "$staging" .
+            shasum -a 256 "${staging}.tar.gz" >> darwin-checksums.txt
+          done
+
+      - name: Upload macOS archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          for arch in arm64 amd64; do
+            gh release upload "v${version}" "beads_${version}_darwin_${arch}.tar.gz" --clobber
+          done
+
+      - name: Append macOS checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          checksum_dir="$(mktemp -d)"
+          gh release download "v${version}" --pattern checksums.txt --dir "$checksum_dir"
+          checksum_file="$checksum_dir/checksums.txt"
+          grep -vE 'beads_[^ ]+_darwin_(arm64|amd64)\.tar\.gz' "$checksum_file" > "$checksum_file.tmp" || true
+          cat darwin-checksums.txt >> "$checksum_file.tmp"
+          mv "$checksum_file.tmp" "$checksum_file"
+          gh release upload "v${version}" "$checksum_file" --clobber
