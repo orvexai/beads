@@ -136,6 +136,13 @@ func WarnError(format string, args ...interface{}) {
 // retrying immediately.
 const ExitMigrationFrozen = 14
 
+// Bootstrap exit codes are stable machine-facing distinctions for callers
+// that preview and then execute a bootstrap plan.
+const (
+	ExitBootstrapActionMismatch = 15
+	ExitBootstrapNoWorkspace    = 16
+)
+
 // CheckReadonly aborts the command when bd is running in read-only mode (the
 // worker-sandbox posture, see readonlyMode), or when a migration freeze
 // marker is active (dc-6jaq, folded in here rather than requiring every write

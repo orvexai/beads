@@ -152,6 +152,10 @@ Examples:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		yesFlag, _ := cmd.Flags().GetBool("yes")
 		nonInteractiveFlag, _ := cmd.Flags().GetBool("non-interactive")
+		expectAction, _ := cmd.Flags().GetString("expect-action")
+		if expectAction != "" && expectAction != "init" && expectAction != "jsonl-import" {
+			return HandleError("--expect-action must be init or jsonl-import")
+		}
 
 		// Resolve non-interactive mode: flag > env var > CI env > terminal detection.
 		nonInteractive := isNonInteractiveBootstrap(yesFlag || nonInteractiveFlag)
@@ -205,11 +209,12 @@ Examples:
 				if err := outputJSON(noWorkspaceBootstrapPayload()); err != nil {
 					return err
 				}
-				return SilentExit()
+				return &exitError{Code: ExitBootstrapNoWorkspace}
 			}
 			fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
 			fmt.Fprintf(os.Stderr, "Bootstrap is for existing projects that need database setup.\n")
-			return HandleError("%s", activeWorkspaceNotFoundMessage())
+			fmt.Fprintf(os.Stderr, "Error: %s\n", activeWorkspaceNotFoundMessage())
+			return &exitError{Code: ExitBootstrapNoWorkspace}
 		}
 
 		if err := guardLegacyUpgradeWorkspace(beadsDir); err != nil {
@@ -249,6 +254,17 @@ Examples:
 
 		// Determine action based on state
 		plan := detectBootstrapAction(beadsDir, cfg)
+		if expectAction != "" && plan.Action != expectAction {
+			payload := bootstrapActionMismatchPayload(plan, expectAction)
+			if jsonOutput {
+				if err := outputJSON(payload); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: bootstrap action changed from expected %q to %q\n", expectAction, plan.Action)
+			}
+			return &exitError{Code: ExitBootstrapActionMismatch}
+		}
 
 		if jsonOutput {
 			if err := outputJSON(plan); err != nil {
@@ -364,9 +380,21 @@ func bootstrapPlanOutcome(plan BootstrapPlan, dryRun bool) error {
 
 func noWorkspaceBootstrapPayload() map[string]interface{} {
 	return map[string]interface{}{
-		"action":     "none",
-		"reason":     activeWorkspaceNotFoundError(),
-		"suggestion": diagHint(),
+		"action":      "none",
+		"reason":      activeWorkspaceNotFoundError(),
+		"reason_code": "no_active_beads_workspace",
+		"exit_code":   ExitBootstrapNoWorkspace,
+		"suggestion":  diagHint(),
+	}
+}
+
+func bootstrapActionMismatchPayload(plan BootstrapPlan, expected string) map[string]interface{} {
+	return map[string]interface{}{
+		"action":          plan.Action,
+		"expected_action": expected,
+		"reason":          "bootstrap_action_mismatch",
+		"reason_detail":   fmt.Sprintf("expected action %q, discovered %q", expected, plan.Action),
+		"exit_code":       ExitBootstrapActionMismatch,
 	}
 }
 
@@ -1342,6 +1370,7 @@ func init() {
 	bootstrapCmd.Flags().Bool("dry-run", false, "Show what would be done without doing it")
 	bootstrapCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts (for CI/automation)")
 	bootstrapCmd.Flags().Bool("non-interactive", false, "Alias for --yes")
+	bootstrapCmd.Flags().String("expect-action", "", "Require the discovered action to be init or jsonl-import before execution")
 	rootCmd.AddCommand(bootstrapCmd)
 }
 

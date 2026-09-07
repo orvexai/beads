@@ -170,6 +170,34 @@ func TestNoWorkspaceBootstrapPayload(t *testing.T) {
 	if got := payload["suggestion"]; got != diagHint() {
 		t.Fatalf("suggestion = %v, want %q", got, diagHint())
 	}
+	if got := payload["reason_code"]; got != "no_active_beads_workspace" {
+		t.Fatalf("reason_code = %v, want %q", got, "no_active_beads_workspace")
+	}
+	if got := payload["exit_code"]; got != ExitBootstrapNoWorkspace {
+		t.Fatalf("exit_code = %v, want %d", got, ExitBootstrapNoWorkspace)
+	}
+}
+
+func TestBootstrapActionMismatchPayload(t *testing.T) {
+	payload := bootstrapActionMismatchPayload(BootstrapPlan{Action: "restore"}, "init")
+	if got := payload["action"]; got != "restore" {
+		t.Fatalf("action = %v, want %q", got, "restore")
+	}
+	if got := payload["expected_action"]; got != "init" {
+		t.Fatalf("expected_action = %v, want %q", got, "init")
+	}
+	if got := payload["reason"]; got != "bootstrap_action_mismatch" {
+		t.Fatalf("reason = %v, want %q", got, "bootstrap_action_mismatch")
+	}
+	if got := payload["exit_code"]; got != ExitBootstrapActionMismatch {
+		t.Fatalf("exit_code = %v, want %d", got, ExitBootstrapActionMismatch)
+	}
+	if code, ok := exitCodeFromError(&exitError{Code: ExitBootstrapActionMismatch}); !ok || code != 15 {
+		t.Fatalf("mismatch exit contract = %d/%v, want 15/true", code, ok)
+	}
+	if code, ok := exitCodeFromError(&exitError{Code: ExitBootstrapNoWorkspace}); !ok || code != 16 {
+		t.Fatalf("no-workspace exit contract = %d/%v, want 16/true", code, ok)
+	}
 }
 
 func TestDetectBootstrapAction_ServerModeMissingConfiguredDBDoesNotReturnNone(t *testing.T) {

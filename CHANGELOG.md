@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Bootstrap plan guard** - `bd bootstrap --expect-action init|jsonl-import` now
+  refuses execution when discovery differs from the caller's validated action,
+  returning exit code 15 and JSON reason `bootstrap_action_mismatch`. A missing
+  active workspace has stable exit code 16 and JSON reason code
+  `no_active_beads_workspace`.
+
 ## [1.3.0] - 2026-08-28
 
 The first tested release off `main` since the 1.1 line. [1.2.2] was a recovery
