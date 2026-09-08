@@ -33,3 +33,9 @@ attribution, Co-Authored-By or session trailers of any kind; verify the landed S
 before any tracker write; never force-push, never rewrite published history, never touch another
 worktree's uncommitted work. Every other session remains Conservative. Recorded by Daniel Niasoff on
 2026-09-08: "authorized - nothing should wait on me".
+
+The Merge role may also TAG the integration branch: an annotated tag at a commit already on that branch,
+created only when the release gate for that tag has passed (the gate's conditions and the verdict
+artefacts it rests on are named in the tag message); a published tag is never moved or deleted.
+Recorded by Daniel Niasoff on 2026-09-08 ("authorized - nothing should wait on me"; "can you push an
+interim release now").
