@@ -476,10 +476,9 @@ func init() {
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoSyncCmd)
 
-	repoAddCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoRemoveCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoListCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
-	repoSyncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON")
+	// Use the root persistent --json flag for repo subcommands. A local flag
+	// bound to the same variable does not mark the root flag as changed, so
+	// config refresh can overwrite a requested --json before RunE executes.
 	repoSyncCmd.Flags().Bool("verbose", false, "Show detailed sync progress")
 
 	rootCmd.AddCommand(repoCmd)

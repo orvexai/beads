@@ -353,6 +353,18 @@ func runGitLabStatus(cmd *cobra.Command, args []string) error {
 	}()
 
 	config := getGitLabConfig()
+	if jsonOutput {
+		result := map[string]interface{}{
+			"url": config.URL, "project_id": config.ProjectID, "group_id": config.GroupID,
+			"default_project_id": config.DefaultProjectID, "has_token": config.Token != "",
+			"configured": true,
+		}
+		if err := validateGitLabConfig(config); err != nil {
+			result["configured"] = false
+			result["error"] = err.Error()
+		}
+		return outputJSON(result)
+	}
 
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintln(out, "GitLab Configuration")

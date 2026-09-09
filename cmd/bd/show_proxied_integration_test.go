@@ -67,13 +67,13 @@ func TestProxiedServerShow(t *testing.T) {
 		}
 
 		// --json takes the same lookup and must report it the same way, with
-		// the machine-readable envelope still alone on stdout.
+		// the machine-readable envelope alone on stdout and no prose on stderr.
 		jsonStdout, jsonStderr := bdProxiedShowFail(t, bd, p.dir, "--json", "sne-nonexistent999")
-		if want := "Issue sne-nonexistent999 not found"; !strings.Contains(jsonStderr, want) {
-			t.Errorf("--json stderr = %q, want it to contain %q", jsonStderr, want)
+		if jsonStderr != "" {
+			t.Errorf("--json stderr = %q, want empty", jsonStderr)
 		}
-		if strings.Contains(jsonStderr, "sql: no rows in result set") {
-			t.Errorf("--json stderr leaks the raw driver sentinel: %q", jsonStderr)
+		if strings.Contains(jsonStdout, "sql: no rows in result set") {
+			t.Errorf("--json stdout leaks the raw driver sentinel: %q", jsonStdout)
 		}
 		start := strings.Index(jsonStdout, "{")
 		if start < 0 {

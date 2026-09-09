@@ -208,7 +208,9 @@ func runShowProxiedRefs(ctx context.Context, uw uow.UnitOfWork, in *showProxiedI
 	for _, id := range in.ids {
 		_, isWisp, err := workapi.GetIssueOrWisp(ctx, src, id)
 		if err != nil {
-			reportIssueLookupFailure("resolving", id, err)
+			if !jsonOutput {
+				reportIssueLookupFailure("resolving", id, err)
+			}
 			continue
 		}
 		refs, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{Direction: domain.DepDirectionIn})
@@ -242,7 +244,9 @@ func runShowProxiedChildren(ctx context.Context, uw uow.UnitOfWork, in *showProx
 	for _, id := range in.ids {
 		_, isWisp, err := workapi.GetIssueOrWisp(ctx, src, id)
 		if err != nil {
-			reportIssueLookupFailure("resolving", id, err)
+			if !jsonOutput {
+				reportIssueLookupFailure("resolving", id, err)
+			}
 			continue
 		}
 		kids, err := proxiedListDeps(ctx, uw, id, isWisp, domain.DepListFilter{
@@ -431,10 +435,11 @@ func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxi
 			details, derr := rd.Get(ctx, in.getRequest(id))
 			if derr != nil {
 				if errors.Is(derr, storage.ErrNotFound) {
-					// The corpus pins this pair for a missing id: the human
-					// line here, and the envelope below once the batch ends
-					// with nothing to emit.
-					reportIssueLookupFailure("fetching", id, derr)
+					// The structured error below is the sole JSON diagnostic;
+					// do not leak a human line onto stderr.
+					if !jsonOutput {
+						reportIssueLookupFailure("fetching", id, derr)
+					}
 					continue
 				}
 				// A BACKEND failure, which the split this replaced reported
@@ -452,7 +457,9 @@ func runShowProxiedDefault(ctx context.Context, uw uow.UnitOfWork, in *showProxi
 
 		issue, isWisp, err := workapi.GetIssueOrWisp(ctx, src, id)
 		if err != nil {
-			reportIssueLookupFailure("fetching", id, err)
+			if !jsonOutput {
+				reportIssueLookupFailure("fetching", id, err)
+			}
 			continue
 		}
 		foundCount++

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -37,31 +39,62 @@ func withStubbedProxiedReader(t *testing.T, hardErr error) {
 }
 
 // TestShowProxiedJSONMissingIDKeepsItsContract is the regression guard for
-// moving the proxied detail view onto issueops.Reader. The corpus pins a PAIR
-// of outputs for a missing id under --json — the human line on stderr and the
-// error envelope on stdout, exit 1 — and the role reports the same miss as a
-// storage.ErrNotFound rather than as a resolve failure the command reported
-// itself. If that mapping is ever lost, this fails instead of the corpus.
+// moving the proxied detail view onto issueops.Reader. A missing ID under
+// --json now has one structured error on stdout and no human prose on stderr;
+// the role still reports the miss as storage.ErrNotFound rather than as a
+// resolve failure the command reported itself.
 func TestShowProxiedJSONMissingIDKeepsItsContract(t *testing.T) {
 	withStubbedProxiedReader(t, nil)
 
-	var err error
-	stderr := captureStderrDuring(t, func() {
-		err = runShowProxiedServer(&cobra.Command{}, context.Background(), []string{stubMissingID})
-	})
+	stdout, stderr, err := captureShowJSONStreams(t)
 
 	if err == nil {
 		t.Error("a batch that found nothing exited zero")
 	}
-	if got, want := strings.SplitN(stderr, "\n", 2)[0], "Issue "+stubMissingID+" not found"; got != want {
-		t.Errorf("stderr first line = %q, want %q", got, want)
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty under --json", stderr)
 	}
-	if !strings.Contains(stderr, "bd history "+stubMissingID) {
-		t.Errorf("expected stderr to hint at checking 'bd history %s', got: %q", stubMissingID, stderr)
+	if !strings.Contains(stdout, `"error"`) || !strings.Contains(stdout, "no issues found") {
+		t.Errorf("stdout = %q, want a structured missing-issue error", stdout)
 	}
-	if strings.Contains(stderr, stubRawNoRows) {
-		t.Errorf("stderr leaks the raw driver sentinel: %q", stderr)
+	if strings.Contains(stdout, stubRawNoRows) {
+		t.Errorf("stdout leaks the raw driver sentinel: %q", stdout)
 	}
+}
+
+func captureShowJSONStreams(t *testing.T) (stdout, stderr string, err error) {
+	t.Helper()
+	stdioMutex.Lock()
+	defer stdioMutex.Unlock()
+
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	outR, outW, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("stdout pipe: %v", pipeErr)
+	}
+	errR, errW, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("stderr pipe: %v", pipeErr)
+	}
+	outDone := make(chan string, 1)
+	errDone := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(outR)
+		outDone <- string(data)
+	}()
+	go func() {
+		data, _ := io.ReadAll(errR)
+		errDone <- string(data)
+	}()
+	os.Stdout, os.Stderr = outW, errW
+	err = runShowProxiedServer(&cobra.Command{}, context.Background(), []string{stubMissingID})
+	_ = outW.Close()
+	_ = errW.Close()
+	os.Stdout, os.Stderr = oldStdout, oldStderr
+	stdout, stderr = <-outDone, <-errDone
+	_ = outR.Close()
+	_ = errR.Close()
+	return stdout, stderr, err
 }
 
 // TestShowProxiedJSONBackendFailureAborts pins the one behavior this move

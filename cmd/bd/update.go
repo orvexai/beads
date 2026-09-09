@@ -467,7 +467,9 @@ pointless).`,
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				}
 				recordFailure(id, fmt.Sprintf("resolving issue: %v", err))
 				continue
 			}
@@ -475,7 +477,9 @@ pointless).`,
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				}
 				recordFailure(id, "issue not found")
 				continue
 			}

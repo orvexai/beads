@@ -56,6 +56,47 @@ func TestEmbeddedImport(t *testing.T) {
 
 	bd := buildEmbeddedBD(t)
 
+	t.Run("title_only_retry_converges", func(t *testing.T) {
+		dir, _, _ := bdInit(t, bd, "--prefix", "imretry")
+		jsonlPath := filepath.Join(t.TempDir(), "title-only.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(`{"title":"Retry-safe title-only import","description":"same content on every retry"}
+`), 0o644); err != nil {
+			t.Fatalf("write title-only JSONL: %v", err)
+		}
+
+		// Each invocation reparses a fresh title-only row, which leaves ID and
+		// timestamps empty. The import contract says retrying the same stream
+		// converges rather than multiplying records, without changing the
+		// identity selected by the first retry.
+		var firstID string
+		for attempt := 1; attempt <= 4; attempt++ {
+			bdImport(t, bd, dir, jsonlPath)
+
+			cmd := exec.Command(bd, "list", "--json", "--limit", "0")
+			cmd.Dir = dir
+			cmd.Env = bdEnv(dir)
+			stdout, stderr, err := runCommandBuffers(t, cmd)
+			if err != nil {
+				t.Fatalf("bd list --json after retry %d failed: %v\nstdout:\n%s\nstderr:\n%s", attempt, err, stdout.String(), stderr.String())
+			}
+			var issues []types.Issue
+			if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+				t.Fatalf("parse bd list --json after retry %d: %v\n%s", attempt, err, stdout.String())
+			}
+			if len(issues) != 1 {
+				t.Fatalf("title-only import created %d issues after retry %d, want 1", len(issues), attempt)
+			}
+			if attempt == 1 {
+				firstID = issues[0].ID
+			} else if issues[0].ID != firstID {
+				t.Fatalf("title-only retry %d changed issue ID from %q to %q", attempt, firstID, issues[0].ID)
+			}
+		}
+		if firstID == "" {
+			t.Fatal("title-only import returned an empty issue ID")
+		}
+	})
+
 	t.Run("from_explicit_file", func(t *testing.T) {
 		dir, _, _ := bdInit(t, bd, "--prefix", "imfile")
 

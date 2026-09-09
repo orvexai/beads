@@ -305,6 +305,18 @@ func runGitHubStatus(cmd *cobra.Command, args []string) error {
 	}()
 
 	config := getGitHubConfig()
+	if jsonOutput {
+		result := map[string]interface{}{
+			"owner": config.Owner, "repo": config.Repo, "repository": config.Repository,
+			"url": config.URL, "has_token": config.Token != "",
+			"configured": true,
+		}
+		if err := validateGitHubConfig(config); err != nil {
+			result["configured"] = false
+			result["error"] = err.Error()
+		}
+		return outputJSON(result)
+	}
 
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintln(out, "GitHub Configuration")

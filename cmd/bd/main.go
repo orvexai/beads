@@ -879,6 +879,10 @@ func init() {
 }
 
 func resolveChangeDirBeadsDir(path string) (string, error) {
+	return resolveChangeDirBeadsDirForCommand(path, false)
+}
+
+func resolveChangeDirBeadsDirForCommand(path string, allowFreshInit bool) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", nil
 	}
@@ -895,16 +899,24 @@ func resolveChangeDirBeadsDir(path string) (string, error) {
 	}
 	beadsDir := beads.FindBeadsDirFrom(absPath)
 	if beadsDir == "" {
+		if allowFreshInit {
+			return filepath.Join(absPath, ".beads"), nil
+		}
 		return "", fmt.Errorf("cannot use -C directory %q: no beads project found", path)
 	}
 	return beadsDir, nil
 }
 
 func applyChangeDirSelection() error {
+	return applyChangeDirSelectionForCommand(nil)
+}
+
+func applyChangeDirSelectionForCommand(cmd *cobra.Command) error {
 	if strings.TrimSpace(changeDir) == "" {
 		return nil
 	}
-	beadsDir, err := resolveChangeDirBeadsDir(changeDir)
+	allowFreshInit := cmd != nil && cmd.Name() == "init"
+	beadsDir, err := resolveChangeDirBeadsDirForCommand(changeDir, allowFreshInit)
 	if err != nil {
 		return HandleError("%v", err)
 	}
@@ -1032,7 +1044,7 @@ var rootCmd = &cobra.Command{
 		debug.SetVerbose(verboseFlag)
 		debug.SetQuiet(quietFlag)
 
-		if err := applyChangeDirSelection(); err != nil {
+		if err := applyChangeDirSelectionForCommand(cmd); err != nil {
 			return err
 		}
 

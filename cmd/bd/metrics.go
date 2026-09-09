@@ -108,8 +108,7 @@ var metricsExampleCmd = &cobra.Command{
 				c.CloseEventAndAdd(evt)
 			}
 		}()
-		runMetricsExample(cmd)
-		return nil
+		return runMetricsExample(cmd)
 	},
 }
 
@@ -202,8 +201,21 @@ func runMetricsStatus(cmd *cobra.Command) {
 	}
 }
 
-func runMetricsExample(cmd *cobra.Command) {
+func runMetricsExample(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
+	if jsonOutput {
+		example := map[string]any{
+			"distinct_id": "(machine-derived, HMAC-protected — not your identity)",
+			"app_name":    "beads",
+			"app_version": Version,
+			"platform":    runtime.GOOS,
+			"events": []map[string]any{{
+				"name":       "cli_command",
+				"attributes": []map[string]string{{"key": "command", "value": "ready"}},
+			}},
+		}
+		return outputJSON(map[string]any{"example": example})
+	}
 	fmt.Fprintln(out, "bd sends one kind of anonymous event: a `cli_command` record — one per")
 	fmt.Fprintln(out, "command you run. Each batch carries a machine-derived, HMAC-protected distinct")
 	fmt.Fprintln(out, "ID, the bd version, and your OS platform. The only per-event attribute is the")
@@ -232,6 +244,7 @@ func runMetricsExample(cmd *cobra.Command) {
 		fmt.Fprintln(out, "and re-run `bd metrics example` to see the exact payloads buffered on your")
 		fmt.Fprintln(out, "machine before they are sent.")
 	}
+	return nil
 }
 
 // marshalIndentNoEscape is json.MarshalIndent without Go's default HTML escaping,

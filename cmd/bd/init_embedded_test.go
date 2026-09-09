@@ -294,6 +294,19 @@ func TestEmbeddedInit(t *testing.T) {
 
 	bd := buildEmbeddedBD(t)
 
+	t.Run("fresh_directory_with_C", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command(bd, "-C", dir, "init", "--prefix", "fresh", "--non-interactive", "--skip-hooks", "--skip-agents")
+		cmd.Env = bdEnv(dir)
+		stdout, stderr, err := runCommandBuffers(t, cmd)
+		if err != nil {
+			t.Fatalf("bd -C fresh init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".beads", "metadata.json")); err != nil {
+			t.Fatalf("fresh -C init did not create metadata.json: %v", err)
+		}
+	})
+
 	t.Run("basic", func(t *testing.T) {
 		dir, beadsDir, out := bdInit(t, bd, "--prefix", "basic")
 		embeddedDir := filepath.Join(beadsDir, "embeddeddolt")

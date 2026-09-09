@@ -154,7 +154,11 @@ const ExitMigrationFrozen = 14
 // so their deferred cleanup still runs.
 func CheckReadonly(operation string) {
 	if readonlyMode {
-		fmt.Fprintf(os.Stderr, "Error: operation '%s' is not allowed in read-only mode\n", operation)
+		if jsonOutput {
+			jsonStdoutError(fmt.Sprintf("operation %q is not allowed in read-only mode", operation), "")
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: operation '%s' is not allowed in read-only mode\n", operation)
+		}
 		metrics.CloseAndFlush()
 		os.Exit(1)
 	}

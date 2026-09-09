@@ -7,6 +7,10 @@ type BatchCreateOptions struct {
 	// CreateOnly uses strict insert semantics after the caller has reserved the
 	// issue ID. It is for guarded public creates; import behavior is unchanged.
 	CreateOnly bool
+	// StableImportIDs gives ID-less import rows a deterministic content-derived
+	// ID. It is intentionally opt-in: ordinary creates continue to use the
+	// historical timestamp/actor hash and existing IDs never change.
+	StableImportIDs bool
 	// SkipPrefixValidation skips prefix validation for existing IDs (used during import)
 	SkipPrefixValidation bool
 	// ConflictSkip makes batch creation insert-if-new instead of UPSERT: an

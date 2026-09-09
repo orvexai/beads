@@ -74,7 +74,9 @@ func runReopenProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 			Provenance: "bd: reopen " + target.id,
 		})
 		if err != nil {
-			reportIssueLookupFailure("reopening", target.id, err)
+			if !jsonOutput {
+				reportIssueLookupFailure("reopening", target.id, err)
+			}
 			hasError = true
 			continue
 		}
@@ -132,7 +134,9 @@ func reopenProxiedResolve(ctx context.Context, ids []string) ([]reopenProxiedTar
 		for _, id := range ids {
 			issue, _, err := workapi.GetIssueOrWisp(ctx, source, id)
 			if err != nil {
-				reportIssueLookupFailure("resolving", id, err)
+				if !jsonOutput {
+					reportIssueLookupFailure("resolving", id, err)
+				}
 				failed = true
 				continue
 			}

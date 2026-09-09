@@ -440,6 +440,12 @@ Example:
 			return HandleErrorRespectJSON("getting human bead stats: %v", err)
 		}
 
+		if jsonOutput {
+			total, pending, responded, dismissed := humanStatsCounts(issues)
+			return outputJSON(map[string]int{
+				"total": total, "pending": pending, "responded": responded, "dismissed": dismissed,
+			})
+		}
 		printHumanStats(issues)
 		return nil
 	},
@@ -451,10 +457,22 @@ Example:
 const dismissedCloseReason = "Dismissed"
 
 func printHumanStats(issues []*types.Issue) {
-	total := len(issues)
-	pending := 0
+	total, pending, responded, dismissed := humanStatsCounts(issues)
+
+	fmt.Printf("\n%s\n", ui.RenderBold("Human Beads Stats"))
+	fmt.Println()
+	fmt.Printf("  Total:      %d\n", total)
+	fmt.Printf("  Pending:    %d\n", pending)
+	fmt.Printf("  Responded:  %d\n", responded)
+	fmt.Printf("  Dismissed:  %d\n", dismissed)
+	fmt.Println()
+}
+
+func humanStatsCounts(issues []*types.Issue) (total, pending, responded, dismissed int) {
+	total = len(issues)
+	pending = 0
 	closed := 0
-	dismissed := 0
+	dismissed = 0
 
 	for _, issue := range issues {
 		switch issue.Status {
@@ -469,15 +487,8 @@ func printHumanStats(issues []*types.Issue) {
 		}
 	}
 
-	responded := closed - dismissed
-
-	fmt.Printf("\n%s\n", ui.RenderBold("Human Beads Stats"))
-	fmt.Println()
-	fmt.Printf("  Total:      %d\n", total)
-	fmt.Printf("  Pending:    %d\n", pending)
-	fmt.Printf("  Responded:  %d\n", responded)
-	fmt.Printf("  Dismissed:  %d\n", dismissed)
-	fmt.Println()
+	responded = closed - dismissed
+	return total, pending, responded, dismissed
 }
 
 // printCmd prints a command with consistent formatting

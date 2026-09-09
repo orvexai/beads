@@ -66,6 +66,18 @@ func TestResolveChangeDirBeadsDirRejectsDirectoryWithoutProject(t *testing.T) {
 	}
 }
 
+func TestResolveChangeDirBeadsDirAllowsFreshInit(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveChangeDirBeadsDirForCommand(dir, true)
+	if err != nil {
+		t.Fatalf("resolve fresh init target: %v", err)
+	}
+	want := filepath.Join(dir, ".beads")
+	if got != want {
+		t.Fatalf("resolve fresh init target = %q, want %q", got, want)
+	}
+}
+
 func TestIsPreviewCommand(t *testing.T) {
 	tests := []struct {
 		name string

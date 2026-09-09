@@ -183,6 +183,10 @@ func TestProxiedClaimAbortsTheBatchOnCancellation(t *testing.T) {
 }
 
 func TestProxiedClaimReportsAMissingIssue(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
 	p := &claimRoleProvider{
 		lifecycle: &recordingLifecycle{},
 		readErr:   issueops.ErrNotFound,

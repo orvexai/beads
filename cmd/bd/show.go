@@ -133,7 +133,9 @@ var showCmd = &cobra.Command{
 				if result != nil {
 					result.Close()
 				}
-				if isNotFoundErr(err) {
+				if jsonOutput {
+					continue
+				} else if isNotFoundErr(err) {
 					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 					fmt.Fprintf(os.Stderr, "Hint: %s\n", showNotFoundHint(id))
 				} else {
@@ -145,8 +147,10 @@ var showCmd = &cobra.Command{
 				if result != nil {
 					result.Close()
 				}
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				fmt.Fprintf(os.Stderr, "Hint: %s\n", showNotFoundHint(id))
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+					fmt.Fprintf(os.Stderr, "Hint: %s\n", showNotFoundHint(id))
+				}
 				continue
 			}
 			issue := result.Issue

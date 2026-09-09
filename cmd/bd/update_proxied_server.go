@@ -181,16 +181,22 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 func proxiedUpdateTarget(ctx context.Context, id string, in *updateInput) (*types.Issue, *updateIDFailure) {
 	rd, err := proxiedIssueReader()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+		}
 		return nil, &updateIDFailure{ID: id, Error: fmt.Sprintf("resolving issue: %v", err)}
 	}
 	details, err := rd.Get(ctx, issueops.GetRequest{ID: id})
 	if err != nil {
 		if errors.Is(err, issueops.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			}
 			return nil, &updateIDFailure{ID: id, Error: "issue not found"}
 		}
-		fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+		}
 		return nil, &updateIDFailure{ID: id, Error: fmt.Sprintf("resolving issue: %v", err)}
 	}
 	current := &details.Issue
@@ -244,7 +250,9 @@ func proxiedClaimPoolAliases(ctx context.Context) func() []string {
 func proxiedUpdateFailure(id string, err error) *updateIDFailure {
 	switch {
 	case errors.Is(err, storage.ErrNotFound):
-		fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+		}
 		return &updateIDFailure{ID: id, Error: "issue not found"}
 	case errors.Is(err, storage.ErrAlreadyClaimed), errors.Is(err, storage.ErrNotClaimable):
 		fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)

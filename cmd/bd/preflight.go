@@ -99,9 +99,14 @@ func runPreflight(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	checklist := buildPreflightChecklist(root)
+	if jsonOutput {
+		return outputJSON(map[string]interface{}{"check": false, "checklist": checklist})
+	}
+
 	fmt.Println("PR Readiness Checklist:")
 	fmt.Println()
-	for _, item := range buildPreflightChecklist(root) {
+	for _, item := range checklist {
 		fmt.Printf("[ ] %s\n", item)
 	}
 	fmt.Println()

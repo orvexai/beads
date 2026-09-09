@@ -149,6 +149,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	actor := getActorWithGit()
 	batchOpts := storage.BatchCreateOptions{
 		SkipPrefixValidation:           opts.SkipPrefixValidation,
+		StableImportIDs:                true,
 		ConflictSkip:                   opts.ConflictSkip,
 		RejectStaleUpserts:             !opts.AllowStale,
 		SkipDependencyValidationErrors: true,

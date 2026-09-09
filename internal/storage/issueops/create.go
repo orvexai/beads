@@ -219,7 +219,11 @@ func assignCreateIssueIDInTx(ctx context.Context, tx DBTX, bc *BatchContext, iss
 			prefix = bc.ConfigPrefix + "-wisp"
 		}
 		var err error
-		issue.ID, err = GenerateIssueIDInTable(ctx, tx, issueTable, prefix, issue, actor)
+		if bc.Opts.StableImportIDs {
+			issue.ID, err = GenerateImportIssueIDInTable(ctx, tx, issueTable, prefix, issue)
+		} else {
+			issue.ID, err = GenerateIssueIDInTable(ctx, tx, issueTable, prefix, issue, actor)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to generate issue ID: %w", err)
 		}

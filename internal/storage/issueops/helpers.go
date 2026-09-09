@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
@@ -214,6 +215,48 @@ func GenerateIssueIDInTable(ctx context.Context, tx DBTX, table, prefix string, 
 	}
 
 	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
+}
+
+// GenerateImportIssueIDInTable returns a stable ID for an ID-less import row.
+// It is deliberately separate from GenerateIssueIDInTable: changing the
+// general helper would change the IDs minted by ordinary creates, while an
+// import retry needs an idempotency key that does not contain wall-clock time.
+// The content hash is populated by PrepareIssueForInsert and excludes issue
+// timestamps, so the same title-only row gets the same identity on every run.
+// Existing matching content is adopted first, which also lets a fixed binary
+// converge with rows created by the old timestamp-based retry path.
+//
+//nolint:gosec // G201: table is a hardcoded constant
+func GenerateImportIssueIDInTable(ctx context.Context, tx DBTX, table, prefix string, issue *types.Issue) (string, error) {
+	var existingID string
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE content_hash = ? ORDER BY id LIMIT 1`, table), issue.ContentHash).Scan(&existingID)
+	if err == nil {
+		return existingID, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("failed to find existing import content: %w", err)
+	}
+
+	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, table, prefix)
+	if err != nil {
+		baseLength = 6
+	}
+	if baseLength > 8 {
+		baseLength = 8
+	}
+	for length := baseLength; length <= 8; length++ {
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := idgen.GenerateHashID(prefix, issue.ContentHash, "", "", time.Time{}, length, nonce)
+			var count int
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE id = ?`, table), candidate).Scan(&count); err != nil {
+				return "", fmt.Errorf("failed to check for import ID collision: %w", err)
+			}
+			if count == 0 {
+				return candidate, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("failed to generate stable import ID after trying lengths %d-%d with 10 nonces each", baseLength, 8)
 }
 
 // IsCounterModeTx checks whether issue_id_mode=counter is configured.
