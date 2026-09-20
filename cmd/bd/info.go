@@ -222,7 +222,7 @@ type VersionChange struct {
 var versionChanges = []VersionChange{
 	{
 		Version: "1.3.0",
-		Date:    "2026-08-28",
+		Date:    "2026-09-15",
 		Changes: []string{
 			"RELEASE: first tested release off main since the 1.1 line. v1.2.2 shipped the v1.1.2 tree, so a v1.2.2 user gets the 1.2.1 changes AND the 1.3.0 changes in one step; read the [1.3.0] AND [1.2.1] sections of CHANGELOG.md. 'bd upgrade review' prints exactly the entries between your previous version and this one — prefer it to 'bd info --whats-new', which dumps the whole release history.",
 			"MIGRATION: on an embedded/local store the first invocation auto-migrates from schema v53 to v66 in place. That is ~28 migrations, not 13: the main series runs 0054->0066, then the clone-local series runs 0012->0026 through the same printer, so the counter VISIBLY RESTARTS partway through. That is not a loop — let it finish. Two passes rewrite rows, so the first command is noticeably slower; it is crash-resumable, do not interrupt it. Progress prints per step on stderr only when stderr is a terminal — a silent CI upgrade is not a stuck one.",
@@ -238,6 +238,27 @@ var versionChanges = []VersionChange{
 			"CHANGE: 'bd import' now ERRORS on a redirected stdin with no source argument instead of importing the default JSONL — use 'bd import -' or name the file. 'bd hooks install --chain/--force' are accepted no-ops; marker sections always preserve non-bd hook content.",
 			"FIX: 'bd purge'/'bd prune' select candidates by tier (#5995), so typed wisps minted before the ephemeral column are reachable again — the first purge after upgrade may clear considerably more than usual.",
 			"NEW: a two-level cooperative gate writes *.gate.lock files beside .beads and beside the Dolt physical root (e.g. .beads/embeddeddolt.gate.lock). They are flock names, never deleted; 'bd doctor --fix' adds the *.gate.lock* gitignore pattern.",
+		},
+	},
+	{
+		Version: "1.3.0-rc.2",
+		Date:    "2026-09-05",
+		Changes: []string{
+			"RC: candidate for the 1.3.0 line, carrying three server-mode fixes reported against rc.1; the [1.3.0] entry below still describes everything a 1.2.2 user meets, including the migration and backup notes — read it first.",
+			"FIX: an env-pointed Dolt sql-server (BEADS_DOLT_SERVER_PORT) is classified shared, not owned, so the #5920/#6048 shared-store consent gate runs instead of being bypassed. Before this, bd migrated the shared database in place and exited 0, and older co-resident clients were then hard-refused with a schema version mismatch (#6118).",
+			"FIX: a config.yaml server-mode workspace (dolt.mode: server, no metadata.json) is no longer misread as a legacy workspace — the guard resolves mode through the IsDoltServerMode precedence chain, and a .local_version witness naming bd 1.0 or later vetoes the legacy verdict in every mode (#6119).",
+			"FIX: a metadata-less server-mode workspace no longer opens a phantom .beads/embeddeddolt database that answered 'bd list' with a false-empty exit 0; substitution gates on IsDoltServerMode and honors BEADS_DOLT_SERVER_MODE (#6120).",
+			"CHANGE: 'bd ready --claim' under --proxied-server now refuses a --max-rows/BEADS_MAX_ROWS cap instead of silently dropping it; --claim is no longer exempt. Agent rigs that set the cap globally must unset it for proxied 'bd ready --claim'. Direct mode is unchanged.",
+		},
+	},
+	{
+		// Keyed so an rc.1 tester upgrading to rc.2 gets the rc.2 digest
+		// above instead of the whole release history: getVersionsSince
+		// returns every entry when it cannot find the previous version.
+		Version: "1.3.0-rc.1",
+		Date:    "2026-08-31",
+		Changes: []string{
+			"RC: first candidate for the 1.3.0 line. Everything a 1.2.2 user meets on the way here — the in-place schema migration, the shared-server consent gate, the backup ordering, and the breaking changes — is described in the [1.3.0] entry below; read it first.",
 		},
 	},
 	{

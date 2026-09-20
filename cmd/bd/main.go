@@ -1268,10 +1268,29 @@ var rootCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 				}
 			}
+			if cmdName == "doctor" && usesProxiedServer() {
+				// Refuse only on a real refusal. validateProxyMaintenance...
+				// returns nil for doctor subcommands, and returning early on
+				// that would skip the legacy-store guard and autocommit-mode
+				// resolution every other skipsStoreInit command still runs.
+				if err := validateProxyMaintenanceBeforeProvider(cmd); err != nil {
+					return err
+				}
+			}
 			if beadsDir == "" {
 				beadsDir = beads.FindBeadsDir()
 			}
 			if err := guardLegacyNoStoreCommand(cmd, beadsDir); err != nil {
+				isMigrationCommand := false
+				for current := cmd; current != nil; current = current.Parent() {
+					if current.Name() == "migrate" {
+						isMigrationCommand = true
+						break
+					}
+				}
+				if isMigrationCommand {
+					return HandleProxyCapabilityError(&ProxyCapabilityError{Code: "proxy.migrate.invalid_state", Message: err.Error(), ExitCode: 1, Mutates: false})
+				}
 				return HandleError("%v", err)
 			}
 			if _, err := getDoltAutoCommitMode(); err != nil {
@@ -1459,6 +1478,26 @@ var rootCmd = &cobra.Command{
 		if backendErr := validateConfiguredBackend(cfg, beadsDir); backendErr != nil {
 			return HandleError("%v", backendErr)
 		}
+		// Reject proxy capability combinations before any workspace side effect
+		// (version tracking, migration, auto-start, or provider construction).
+		if cfg != nil && cfg.IsDoltProxiedServerMode() {
+			if err := validateProxyCapabilitiesBeforeProvider(cmd); err != nil {
+				return err
+			}
+			if err := validateProxyMaintenanceBeforeProvider(cmd); err != nil {
+				return err
+			}
+			if err := validateProxyTransformBeforeProvider(cmd); err != nil {
+				return err
+			}
+		}
+		// The proxied provider cannot guarantee strict read-only semantics. Refuse
+		// before provider construction so no connection, migration, or mutation
+		// is attempted; expose the same stable capability code as other proxy
+		// front-door refusals.
+		if readonlyMode && cfg != nil && cfg.IsDoltProxiedServerMode() {
+			return HandleProxyCapabilityError(AssertProxyCapability(ProxyModeProxied, ProxyCapReadonly))
+		}
 		if readonlyMode && !backendSupportsStrictReadonly(cfg) {
 			return HandleError("strict readonly is unavailable for dolt proxied-server backend; refusing to open a store that cannot guarantee mutation-free access")
 		}
@@ -1595,6 +1634,9 @@ var rootCmd = &cobra.Command{
 			DisableAutoStart: policy.disableAutoStart,
 			BeadsDir:         beadsDir,
 			LenientOpen:      isWorkingSetReconcileCommand(cmd),
+			// Bulk loads outlive the pool's 10s fast-fail on every server
+			// pause (wy-sbgucn); explicit env/config settings still win.
+			PoolReadTimeoutFallback: bulkLoadPoolReadTimeout(cmd),
 		}
 
 		// Load config to get database name and server connection settings.
@@ -1604,12 +1646,27 @@ var rootCmd = &cobra.Command{
 		// deployments that empty relic answers every query with an empty
 		// result set and exit 0 (false-empty), which readers misinterpret as
 		// "no work". Absent metadata.json (cfg == nil, cfgErr == nil) keeps
-		// the fresh-repo embedded default below — unless env/config.yaml
-		// supply a remote host (GH#3545): host inference must not depend
-		// on metadata existing, so substitute the default config and let
-		// the normal mode/connection resolution run.
-		if cfg == nil && configfile.DefaultConfig().HostImpliesServerMode() {
-			logConfigDiscovery(beadsDir, "no metadata.json; host inference (GH#3545) selects server mode")
+		// the fresh-repo embedded default below — unless the env/config.yaml
+		// layers already select server mode: that decision must not depend on
+		// metadata existing, so substitute the default config and let the
+		// normal mode/connection resolution run.
+		//
+		// The gate asks IsDoltServerMode — the same resolver the branch below
+		// uses to set doltCfg.ServerMode — rather than HostImpliesServerMode.
+		// Host inference (GH#3545) answers only one layer of that question and
+		// deliberately returns false as soon as config.yaml names a
+		// `dolt.mode`: correct for inferring FROM a host, wrong as the whole
+		// gate. A workspace declaring `dolt.mode: server` in .beads/config.yaml
+		// with no metadata.json therefore kept cfg nil, fell through to the
+		// embedded branch, and answered every query out of a phantom
+		// .beads/embeddeddolt database that same run had just created —
+		// exit 0, no rows, nothing to distinguish it from real emptiness.
+		// BEADS_DOLT_SERVER_MODE=1 did not rescue it either; the old gate
+		// never consulted it. IsDoltServerMode is a superset of
+		// HostImpliesServerMode, so nothing that reached server mode before
+		// stops reaching it now.
+		if cfg == nil && configfile.DefaultConfig().IsDoltServerMode() {
+			logConfigDiscovery(beadsDir, "no metadata.json; env/config.yaml select server mode")
 			cfg = configfile.DefaultConfig()
 		}
 		if cfg != nil {
@@ -1737,7 +1794,7 @@ var rootCmd = &cobra.Command{
 				hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
 				uowSinks.Hook = hookRunner
 			}
-			uowProvider = uow.NewNotifyingProvider(p, uowSinks)
+			uowProvider = wireExternalDependencyUOWProvider(uow.NewNotifyingProvider(p, uowSinks))
 
 			if !previewMode {
 				reconcileVersionProxiedServer(rootCtx)

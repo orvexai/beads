@@ -489,6 +489,15 @@ type Config struct {
 	// execWithLongTimeout/openLongTimeoutConn instead.
 	PoolReadTimeout  time.Duration
 	PoolWriteTimeout time.Duration
+
+	// PoolReadTimeoutFallback replaces the built-in 10s pool read deadline
+	// ONLY when nothing else set PoolReadTimeout — not the caller, not
+	// BEADS_DOLT_POOL_READ_TIMEOUT, not dolt.pool-read-timeout. It lets a
+	// command whose ordinary statements are known to run long (bd import's
+	// chunk commits, which a server-side auto_gc pause stretches past 10s —
+	// wy-sbgucn) raise its own default without overriding an operator's
+	// explicit choice. 0 = keep the built-in default.
+	PoolReadTimeoutFallback time.Duration
 }
 
 // Defaults for the *sql.DB connection pool. Exported for tests/callers that
@@ -2267,6 +2276,9 @@ func buildServerDSN(cfg *Config, database string) string {
 		return base.String()
 	}
 	parsed.ReadTimeout = defaultPoolReadTimeout
+	if cfg.PoolReadTimeoutFallback > 0 {
+		parsed.ReadTimeout = cfg.PoolReadTimeoutFallback
+	}
 	if cfg.PoolReadTimeout > 0 {
 		parsed.ReadTimeout = cfg.PoolReadTimeout
 	}
@@ -2516,15 +2528,6 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 		return db, connStr, serverConnFacts{}, nil
 	}
 
-	// Ensure database exists (may need to create it)
-	// First connect without database to create it
-	initConnStr := buildServerDSN(cfg, "")
-	initDB, err := sql.Open("mysql", initConnStr)
-	if err != nil {
-		return nil, "", serverConnFacts{}, fmt.Errorf("failed to open init connection: %w", err)
-	}
-	defer func() { _ = initDB.Close() }()
-
 	// Validate database name to prevent SQL injection via backtick escaping
 	if err := ValidateDatabaseName(cfg.Database); err != nil {
 		return nil, "", serverConnFacts{}, fmt.Errorf("invalid database name %q: %w", cfg.Database, err)
@@ -2541,6 +2544,46 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, se
 				"this is a test database name on the production server (see DOLT-WAR-ROOM.md)",
 			cfg.Database, cfg.ServerPort)
 	}
+
+	// Fast path (wy-s8ytnw), keyed the same way as Gateway above rather than
+	// by deleting the probe: connect straight to the target database. A
+	// successful connect IS the existence proof, so the steady-state open —
+	// a database that already exists, which is every open but the very
+	// first — skips the no-database init connection (one full MySQL
+	// session per bd invocation on a shared server) and its SHOW DATABASES.
+	// The facts are exact, not merely unproven as for Gateway: existence is
+	// established, and `created` is honestly false — this call created
+	// nothing, so fresh-bootstrap heal stays unarmed and the CreateIfMissing
+	// identity gate (GH#4637) sees alreadyExisted exactly as the SHOW
+	// DATABASES probe would have reported it.
+	//
+	// Any failure — Unknown database (1049) because it does not exist yet,
+	// server down, bad credentials — falls through to the historical
+	// probe-then-create path, which owns creation, the #5042 ownership
+	// signal, databaseNotFoundError, and every error message callers match.
+	pingErr := db.PingContext(ctx)
+	if pingErr == nil {
+		connReady = true
+		return db, connStr, serverConnFacts{alreadyExisted: true}, nil
+	}
+
+	// Advisory only: the probe-then-create path below is the historical open,
+	// so a failure here is never fatal. But a silently discarded error is a
+	// fast path that has quietly stopped firing — here that means every open
+	// is back to burning the extra MySQL session this path exists to remove,
+	// with nothing to say so. Same reasoning as the convergence probe in
+	// internal/storage/schema/lock.go.
+	debug.Logf("dolt: direct-connect fast path unavailable for %q on %s:%d, using the no-database init connection: %v\n",
+		cfg.Database, cfg.ServerHost, cfg.ServerPort, pingErr)
+
+	// Ensure database exists (may need to create it)
+	// First connect without database to create it
+	initConnStr := buildServerDSN(cfg, "")
+	initDB, err := sql.Open("mysql", initConnStr)
+	if err != nil {
+		return nil, "", serverConnFacts{}, fmt.Errorf("failed to open init connection: %w", err)
+	}
+	defer func() { _ = initDB.Close() }()
 
 	// Check if the database already exists before deciding whether to create it.
 	// This prevents the shadow database bug: without CreateIfMissing, connecting
@@ -2823,6 +2866,25 @@ func initSchemaOnDBWithRetryAndGateBootstrapHeal(
 // the right idea but are populated only by the CLI (or, for the last, only
 // under BEADS_TEST_MODE): a library caller pointed at a genuinely shared
 // server leaves them false, and reading them would silently ungate it.
+//
+// ResolveServerMode alone is not enough, because it answers a DIFFERENT
+// question. Its contract is "may bd manage this server's lifecycle", and its
+// port arm reads dolt_server_port from metadata.json ONLY — while the
+// connection path (configfile.GetDoltServerPort, and doltserver's precedence
+// chain behind ApplyResolvedServerPort) takes BEADS_DOLT_SERVER_PORT first.
+// A workspace pointed at an externally-managed server purely by that env var
+// therefore resolved ServerModeOwned while bd was connected to a server it had
+// never started: bd believed it owned a private server and silently promoted
+// the schema of a shared one.
+//
+// So ownership is not inferred from the connection at all. It is PROVEN, by
+// the state files bd writes when it starts a server (see
+// doltserver.ManagesLiveServerOnPort), and everything else is shared. The
+// inverse — enumerating the ways an endpoint can be foreign — was tried and is
+// unbounded: an env var, a config.yaml pin, `bd init --server-port`, a
+// hand-built library Config and a stale port file all produce a local TCP
+// endpoint indistinguishable from an owned one, and each is a separate silent
+// bypass. There is exactly one way to be sure, and it is cheap.
 func sharedServerDatabase(cfg *Config) bool {
 	// No workspace to prove ownership from — a bare dolt.New pointed at some
 	// endpoint. Fail closed.
@@ -2840,6 +2902,22 @@ func sharedServerDatabase(cfg *Config) bool {
 	if doltserver.IsSharedServerMode() {
 		return true
 	}
+	// The proof. Without a live server bd started for THIS workspace on the
+	// very port this store is connected to, the database belongs to someone
+	// else and migrating it is not this open's call to make.
+	//
+	// cfg.BeadsDir, not doltserver.ResolveServerDir(cfg.BeadsDir): the two
+	// differ only in shared-server mode, which returned above. Resolving here
+	// would read another directory's state files for the one topology this
+	// line can no longer be reached in.
+	if !doltserver.ManagesLiveServerOnPort(cfg.BeadsDir, cfg.ServerPort) {
+		return true
+	}
+	// Proof of a bd-managed server does not override an explicit declaration
+	// that the lifecycle is external (metadata dolt_server_port, host
+	// inference, BEADS_DOLT_SERVER_MODE). Keeping this last means the change
+	// above can only ever ADD shared classifications to what #5920/#6048
+	// already gated, never remove one.
 	return doltserver.ResolveServerMode(cfg.BeadsDir) != doltserver.ServerModeOwned
 }
 
@@ -4757,12 +4835,12 @@ func (s *DoltStore) RecomputeAllBlocked(ctx context.Context) (int, error) {
 }
 
 func (s *DoltStore) recomputeAllBlocked(ctx context.Context) (int, error) {
-	// The full pass's batched UPDATEs carry five correlated EXISTS subqueries
-	// each; on a loaded shared server a single batch can outlive the pool's
-	// per-I/O deadline (default 10s, see buildServerDSN), killing the repair
-	// with "i/o timeout" — and the retry dies the same way, so the owed
-	// recompute never lands (bd-bn8jo). Run it on a dedicated long-timeout
-	// connection like the other known-long maintenance ops.
+	// The full pass runs unbatched whole-table semi-join UPDATEs, looped until
+	// the fixpoint converges; on a loaded shared server a single one can
+	// outlive the pool's per-I/O deadline (default 10s, see buildServerDSN),
+	// killing the repair with "i/o timeout" — and the retry dies the same way,
+	// so the owed recompute never lands (bd-bn8jo). Run it on a dedicated
+	// long-timeout connection like the other known-long maintenance ops.
 	db, err := s.openLongTimeoutConn()
 	if err != nil {
 		return 0, err
