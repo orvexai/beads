@@ -476,9 +476,6 @@ func init() {
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoSyncCmd)
 
-	// Use the root persistent --json flag for repo subcommands. A local flag
-	// bound to the same variable does not mark the root flag as changed, so
-	// config refresh can overwrite a requested --json before RunE executes.
 	repoSyncCmd.Flags().Bool("verbose", false, "Show detailed sync progress")
 
 	rootCmd.AddCommand(repoCmd)
