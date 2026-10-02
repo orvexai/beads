@@ -68,6 +68,12 @@ func TestEmbeddedInfo(t *testing.T) {
 		if !strings.Contains(out, "Schema") {
 			t.Errorf("expected 'Schema' heading in output: %s", out)
 		}
+		if !strings.Contains(out, "Client migrations: main v69") {
+			t.Errorf("expected client migration version in output: %s", out)
+		}
+		if !strings.Contains(out, "Database migrations: main v69") {
+			t.Errorf("expected database migration version in output: %s", out)
+		}
 	})
 
 	// ===== Whats New =====
@@ -126,6 +132,18 @@ func TestEmbeddedInfo(t *testing.T) {
 		}
 		if !foundIssues {
 			t.Errorf("expected 'issues' in schema tables: %v", tables)
+		}
+		migrations, ok := schema["migration_versions"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("migration_versions missing: %v", schema["migration_versions"])
+		}
+		client, ok := migrations["client"].(map[string]interface{})
+		if !ok || client["main"] != float64(69) || client["clone_local"] != float64(27) {
+			t.Errorf("client migration versions = %v, want main 69 and clone-local 27", migrations["client"])
+		}
+		database, ok := migrations["database"].(map[string]interface{})
+		if !ok || database["main"] != float64(69) || database["clone_local"] != float64(27) {
+			t.Errorf("database migration versions = %v, want main 69 and clone-local 27 after init", migrations["database"])
 		}
 	})
 

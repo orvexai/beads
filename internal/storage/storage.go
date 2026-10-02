@@ -805,6 +805,21 @@ type SchemaMigrator interface {
 	ApplySchemaMigrations(ctx context.Context) (applied int, err error)
 }
 
+// SchemaMigrationVersions reports the highest applied cursor in each schema
+// migration series. Main tracks shared schema changes; CloneLocal tracks
+// clone-local repairs. These cursor versions are distinct from the bd release
+// version stored in local metadata.
+type SchemaMigrationVersions struct {
+	Main       int `json:"main"`
+	CloneLocal int `json:"clone_local"`
+}
+
+// SchemaMigrationVersionReader exposes schema cursor diagnostics without
+// requiring callers to inspect a driver's raw database connection.
+type SchemaMigrationVersionReader interface {
+	SchemaMigrationVersions(ctx context.Context) (SchemaMigrationVersions, error)
+}
+
 // Compactor squashes old Dolt commits while preserving recent ones.
 // Callers should type-assert to this interface for selective history compaction.
 type Compactor interface {
