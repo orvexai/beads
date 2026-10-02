@@ -84,3 +84,29 @@ func TestVersionChangesCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationVersionReportShowsClientSchemaCeiling(t *testing.T) {
+	got := migrationVersionReport(t.Context(), nil)
+	client, ok := got["client"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("client migration report = %T, want map", got["client"])
+	}
+	if client["bd_version"] != Version {
+		t.Errorf("client bd_version = %v, want %s", client["bd_version"], Version)
+	}
+	if client["main"] != 69 {
+		t.Errorf("client main migration = %v, want 69", client["main"])
+	}
+	if client["clone_local"] != 27 {
+		t.Errorf("client clone-local migration = %v, want 27", client["clone_local"])
+	}
+	if got["database"] != nil {
+		t.Errorf("database migration report without a store = %v, want nil", got["database"])
+	}
+
+	infoSchema := buildInfoSchema("1.3.1", "bd", nil, got)
+	if infoSchema["workspace_version"] != "1.3.1" || infoSchema["schema_version"] != "1.3.1" {
+		t.Errorf("workspace version fields = (%v, %v), want compatibility-preserving 1.3.1 values",
+			infoSchema["workspace_version"], infoSchema["schema_version"])
+	}
+}

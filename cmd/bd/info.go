@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi"
 )
@@ -21,8 +24,14 @@ var infoCmd = &cobra.Command{
 This command helps debug issues where bd is using an unexpected database. It shows:
   - The absolute path to the database file
   - Database statistics (issue count)
-  - Schema information (with --schema flag)
+  - Client and database migration versions (with --schema flag)
   - What's new in recent versions (with --whats-new flag)
+
+With --schema, migration_versions.client reports the migrations this binary
+supports, and migration_versions.database reports the migrations applied to
+the database. Each reports main and clone-local series. workspace_version is
+the last bd release stamped in local metadata; schema_version remains a
+compatibility alias for that value.
 
 Examples:
   bd info
@@ -99,7 +108,7 @@ Examples:
 					schemaVersion = "unknown"
 				}
 				prefix, _ := store.GetConfig(ctx, "issue_prefix") // Best effort: empty prefix is valid
-				info["schema"] = buildInfoSchema(schemaVersion, prefix, issues)
+				info["schema"] = buildInfoSchema(schemaVersion, prefix, issues, migrationVersionReport(ctx, store))
 			}
 		}
 
@@ -115,7 +124,7 @@ func absoluteDBPath() string {
 	return absDBPath
 }
 
-func buildInfoSchema(schemaVersion, prefix string, issues []*types.Issue) map[string]interface{} {
+func buildInfoSchema(schemaVersion, prefix string, issues []*types.Issue, migrationVersions map[string]interface{}) map[string]interface{} {
 	tables := []string{"issues", "dependencies", "labels", "config", "metadata"}
 
 	configMap := make(map[string]string)
@@ -137,11 +146,38 @@ func buildInfoSchema(schemaVersion, prefix string, issues []*types.Issue) map[st
 	}
 
 	return map[string]interface{}{
-		"tables":           tables,
-		"schema_version":   schemaVersion,
-		"config":           configMap,
-		"sample_issue_ids": sampleIDs,
-		"detected_prefix":  detectedPrefix,
+		"tables": tables,
+		// schema_version is retained for compatibility; it is the last bd
+		// release stamped in clone-local metadata, not a migration cursor.
+		"schema_version":     schemaVersion,
+		"workspace_version":  schemaVersion,
+		"migration_versions": migrationVersions,
+		"config":             configMap,
+		"sample_issue_ids":   sampleIDs,
+		"detected_prefix":    detectedPrefix,
+	}
+}
+
+func migrationVersionReport(ctx context.Context, store storage.DoltStorage) map[string]interface{} {
+	client := map[string]interface{}{
+		"bd_version":  Version,
+		"main":        schema.LatestVersion(),
+		"clone_local": schema.LatestIgnoredVersion(),
+	}
+	var database interface{}
+	if store != nil {
+		if reader, ok := storage.UnwrapStore(store).(storage.SchemaMigrationVersionReader); ok {
+			if versions, err := reader.SchemaMigrationVersions(ctx); err == nil {
+				database = map[string]interface{}{
+					"main":        versions.Main,
+					"clone_local": versions.CloneLocal,
+				}
+			}
+		}
+	}
+	return map[string]interface{}{
+		"client":   client,
+		"database": database,
 	}
 }
 
@@ -165,8 +201,18 @@ func renderInfo(info map[string]interface{}, schemaFlag bool, absDBPath string, 
 		if schemaInfo, ok := info["schema"].(map[string]interface{}); ok {
 			fmt.Println("\nSchema Information:")
 			fmt.Printf("  Tables: %v\n", schemaInfo["tables"])
-			if version, ok := schemaInfo["schema_version"].(string); ok {
-				fmt.Printf("  Schema Version: %s\n", version)
+			if version, ok := schemaInfo["workspace_version"].(string); ok {
+				fmt.Printf("  Workspace Version: %s\n", version)
+			}
+			if migrationVersions, ok := schemaInfo["migration_versions"].(map[string]interface{}); ok {
+				if client, ok := migrationVersions["client"].(map[string]interface{}); ok {
+					fmt.Printf("  Client migrations: main v%v, clone-local v%v\n", client["main"], client["clone_local"])
+				}
+				if database, ok := migrationVersions["database"].(map[string]interface{}); ok {
+					fmt.Printf("  Database migrations: main v%v, clone-local v%v\n", database["main"], database["clone_local"])
+				} else {
+					fmt.Println("  Database migrations: unavailable")
+				}
 			}
 			if prefix, ok := schemaInfo["detected_prefix"].(string); ok && prefix != "" {
 				fmt.Printf("  Detected Prefix: %s\n", prefix)
@@ -227,6 +273,13 @@ type VersionChange struct {
 
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
+	{
+		Version: "1.3.2",
+		Date:    "2026-10-02",
+		Changes: []string{
+			"DIAGNOSTICS: 'bd info --schema' reports the main and clone-local migration versions supported by this client and currently applied to the database. The workspace software version remains available separately as workspace_version (schema_version is retained as a compatibility alias).",
+		},
+	},
 	{
 		Version: "1.3.1",
 		Date:    "2026-10-01",

@@ -55,7 +55,7 @@ func runInfoProxiedServer(ctx context.Context, schemaFlag bool) error {
 			schemaVersion = "unknown"
 		}
 		prefix, _ := uw.ConfigUseCase().GetConfig(ctx, "issue_prefix")
-		info["schema"] = buildInfoSchema(schemaVersion, prefix, issues)
+		info["schema"] = buildInfoSchema(schemaVersion, prefix, issues, migrationVersionReport(ctx, nil))
 	}
 
 	return renderInfo(info, schemaFlag, absDBPath, suppressHookWarning)

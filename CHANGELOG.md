@@ -5,6 +5,19 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-10-02
+
+### Added
+
+- `bd info --schema` now shows the main and clone-local migration levels
+  supported by the client and applied to the database, separate from the
+  workspace's recorded Beads version.
+
+### Compatibility
+
+- Retains Orvex v1.3.1's upstream migration support through main schema v69
+  and clone-local v27. The migration cursors are now visible in diagnostics.
+
 ## [1.3.1] - 2026-10-01
 
 ### Fixed
