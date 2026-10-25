@@ -54,11 +54,7 @@
 name: Bazel Farm (trusted forks)
 
 on:
-  pull_request_target:
-    # Not reopened or ready_for_review: they re-test a head no listed user
-    # necessarily pushed (see the script).
-    types: [ opened, synchronize ]
-    branches: [ main ]
+  workflow_dispatch: {}
 
 # One run per PR; a newer event supersedes (its sender is judged afresh).
 # Differs from bazel.yml's group (bazel-pull_request_target-<n>).
@@ -84,33 +80,33 @@ jobs:
       allowed: ${{ steps.decide.outputs.allowed }}
     steps:
       # The base commit this run's workflow file came from; never the PR.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            .github/bazel-farm-allowlist.txt
-            .github/scripts/bazel-farm-authorize.sh
-          sparse-checkout-cone-mode: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        sparse-checkout: |
+          .github/bazel-farm-allowlist.txt
+          .github/scripts/bazel-farm-authorize.sh
+        sparse-checkout-cone-mode: false
 
-      - name: Check author and sender against the allowlist
-        id: decide
-        env:
-          ALLOWLIST: .github/bazel-farm-allowlist.txt
-          EVENT_NAME: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
-          REPOSITORY: ${{ github.repository }}
-          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_OWNER_ID: ${{ github.event.pull_request.head.repo.owner.id }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
-          SENDER: ${{ github.event.sender.login }}
-          SENDER_ID: ${{ github.event.sender.id }}
-        run: bash .github/scripts/bazel-farm-authorize.sh
+    - name: Check author and sender against the allowlist
+      id: decide
+      env:
+        ALLOWLIST: .github/bazel-farm-allowlist.txt
+        EVENT_NAME: ${{ github.event_name }}
+        ACTION: ${{ github.event.action }}
+        REPOSITORY: ${{ github.repository }}
+        BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        HEAD_OWNER_ID: ${{ github.event.pull_request.head.repo.owner.id }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        SENDER: ${{ github.event.sender.login }}
+        SENDER_ID: ${{ github.event.sender.id }}
+      run: bash .github/scripts/bazel-farm-authorize.sh
 
   # Not "Bazel": pr.yml's call is named that, and this run's lane results are
   # PR-controlled, so its check names ("Bazel Farm / <lane>") must never

@@ -102,27 +102,6 @@
 name: Bazel
 
 on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-    inputs:
-      rbe:
-        description: "Remote execution: on (use secrets), cache (fork simulation: anonymous read-only cache) or off (local only)"
-        required: true
-        type: choice
-        default: "on"
-        options: [ "on", "cache", "off" ]
-      details:
-        description: "List every equivalence divergence"
-        required: false
-        type: boolean
-        default: false
-      dolt-lane:
-        description: "Dolt-backed lane: doltserver (hermetic, remote) or docker (testcontainers A/B control)"
-        required: false
-        type: choice
-        default: "doltserver"
-        options: [ "doltserver", "docker" ]
   workflow_call:
     inputs:
       rbe:
@@ -224,6 +203,28 @@ on:
 # from pr.yml or bazel-farm.yml, whose own groups cancel the calling run too)
 # supersede. The group differs from each caller's, as a called workflow's
 # must.
+  push:
+    tags:
+    - '**'
+  workflow_dispatch:
+    inputs:
+      rbe:
+        description: "Remote execution: on (use secrets), cache (fork simulation: anonymous read-only cache) or off (local only)"
+        required: true
+        type: choice
+        default: "on"
+        options: ["on", "cache", "off"]
+      details:
+        description: "List every equivalence divergence"
+        required: false
+        type: boolean
+        default: false
+      dolt-lane:
+        description: "Dolt-backed lane: doltserver (hermetic, remote) or docker (testcontainers A/B control)"
+        required: false
+        type: choice
+        default: "doltserver"
+        options: ["doltserver", "docker"]
 concurrency:
   group: bazel-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
@@ -253,43 +254,43 @@ jobs:
     steps:
       # The expressions' == is case-insensitive (RBE_WEST_WORKERS=True counts).
       # A push, merge_group or dispatch has no pull_request, so FORK is false.
-      - name: Decide remote execution
-        id: decide
-        env:
-          RBE_VAR_ON: ${{ vars.RBE_WEST_WORKERS == 'true' }}
-          RBE_INPUT_OFF: ${{ inputs.rbe == 'off' }}
-          RBE_INPUT_CACHE: ${{ inputs.rbe == 'cache' }}
-          FORK: ${{ github.event.pull_request.head.repo.fork == true }}
-          FORK_FARM: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' && inputs.checkout-sha != '' }}
-          HAS_EXECUTOR: ${{ secrets.RBE_WEST_EXECUTOR != '' }}
-        run: |
-          for v in RBE_VAR_ON RBE_INPUT_OFF RBE_INPUT_CACHE FORK FORK_FARM HAS_EXECUTOR; do
-            case "${!v}" in
-              true|false) ;;
-              *) echo "::error::$v is '${!v}', want true or false"; exit 1 ;;
-            esac
-          done
-          # A fork runs locally with the read-only cache unless
-          # bazel-farm.yml authorized it; an authorized fork run is remote or
-          # nothing (pr.yml's call already runs it locally).
-          if [ "$RBE_INPUT_OFF" = true ]; then
-            mode=local
-          elif [ "$RBE_INPUT_CACHE" = true ] || { [ "$FORK" = true ] && [ "$FORK_FARM" != true ]; }; then
-            mode=cache
-          elif [ "$RBE_VAR_ON" != true ]; then
-            mode=skip
-          elif [ "$HAS_EXECUTOR" = true ]; then
-            mode=remote
-          elif [ "$FORK_FARM" = true ]; then
-            mode=skip
-          else
-            mode=cache
-          fi
-          enabled=false
-          if [ "$mode" = remote ]; then enabled=true; fi
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
-          echo "Bazel execution mode: **$mode** (RBE_WEST_WORKERS on: $RBE_VAR_ON, rbe=off: $RBE_INPUT_OFF, rbe=cache: $RBE_INPUT_CACHE, fork: $FORK, fork farm: $FORK_FARM, executor secret: $HAS_EXECUTOR)" | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Decide remote execution
+      id: decide
+      env:
+        RBE_VAR_ON: ${{ vars.RBE_WEST_WORKERS == 'true' }}
+        RBE_INPUT_OFF: ${{ inputs.rbe == 'off' }}
+        RBE_INPUT_CACHE: ${{ inputs.rbe == 'cache' }}
+        FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+        FORK_FARM: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' && inputs.checkout-sha != '' }}
+        HAS_EXECUTOR: ${{ secrets.RBE_WEST_EXECUTOR != '' }}
+      run: |
+        for v in RBE_VAR_ON RBE_INPUT_OFF RBE_INPUT_CACHE FORK FORK_FARM HAS_EXECUTOR; do
+          case "${!v}" in
+            true|false) ;;
+            *) echo "::error::$v is '${!v}', want true or false"; exit 1 ;;
+          esac
+        done
+        # A fork runs locally with the read-only cache unless
+        # bazel-farm.yml authorized it; an authorized fork run is remote or
+        # nothing (pr.yml's call already runs it locally).
+        if [ "$RBE_INPUT_OFF" = true ]; then
+          mode=local
+        elif [ "$RBE_INPUT_CACHE" = true ] || { [ "$FORK" = true ] && [ "$FORK_FARM" != true ]; }; then
+          mode=cache
+        elif [ "$RBE_VAR_ON" != true ]; then
+          mode=skip
+        elif [ "$HAS_EXECUTOR" = true ]; then
+          mode=remote
+        elif [ "$FORK_FARM" = true ]; then
+          mode=skip
+        else
+          mode=cache
+        fi
+        enabled=false
+        if [ "$mode" = remote ]; then enabled=true; fi
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+        echo "Bazel execution mode: **$mode** (RBE_WEST_WORKERS on: $RBE_VAR_ON, rbe=off: $RBE_INPUT_OFF, rbe=cache: $RBE_INPUT_CACHE, fork: $FORK, fork farm: $FORK_FARM, executor secret: $HAS_EXECUTOR)" | tee -a "$GITHUB_STEP_SUMMARY"
 
   bazel-test:
     name: test
@@ -311,117 +312,117 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
       # Go is for tools/bazel/equivalence.py's `go list` and for make; Bazel
       # uses its own hermetic SDK.
-      - name: Set up Go
-        id: setup-go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: 'go.mod'
-          cache: false
+    - name: Set up Go
+      id: setup-go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
+      with:
+        go-version-file: 'go.mod'
+        cache: false
 
       # Read-only: main.yml's build-artifacts job owns this cache.
-      - name: Restore Go module cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/go/pkg/mod
-          key: beads-go-mod-v2-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.mod', 'go.sum') }}
-          restore-keys: beads-go-mod-v2-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-
+    - name: Restore Go module cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
+      with:
+        path: ~/go/pkg/mod
+        key: beads-go-mod-v2-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.mod', 'go.sum') }}
+        restore-keys: beads-go-mod-v2-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-
 
       # Go does not re-hash extracted module directories on use; a restored
       # cache written by an untrusted run is checked against go.sum first.
-      - name: Verify restored Go modules
-        run: go mod verify
+    - name: Verify restored Go modules
+      run: go mod verify
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # T1: remote + restored repository cache; T2: remote, cold runner; local:
       # no remote execution (reported, never budgeted).
-      - name: Measurement tier
-        id: tier
-        env:
-          REMOTE: ${{ steps.bazel.outputs.remote }}
-          RESTORED: ${{ steps.bazel.outputs.cache-restored }}
-        run: |
-          if [ "$REMOTE" = "true" ] && [ "$RESTORED" = "true" ]; then tier=T1
-          elif [ "$REMOTE" = "true" ]; then tier=T2
-          else tier=local; fi
-          echo "tier=$tier" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Bazel / test"
-            echo
-            echo "Tier **$tier**: remote execution $REMOTE, runner cache restored $RESTORED."
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
+    - name: Measurement tier
+      id: tier
+      env:
+        REMOTE: ${{ steps.bazel.outputs.remote }}
+        RESTORED: ${{ steps.bazel.outputs.cache-restored }}
+      run: |
+        if [ "$REMOTE" = "true" ] && [ "$RESTORED" = "true" ]; then tier=T1
+        elif [ "$REMOTE" = "true" ]; then tier=T2
+        else tier=local; fi
+        echo "tier=$tier" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Bazel / test"
+          echo
+          echo "Tier **$tier**: remote execution $REMOTE, runner cache restored $RESTORED."
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
 
       # --profile and --build_event_json_file are command options, so they go
       # after `test` (a startup position fails).
-      - name: bazel test //... --config=ci
-        id: test
-        timeout-minutes: 90
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... --config=ci \
-            --profile="$RUNNER_TEMP/bazel-profile.json" \
-            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
-            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=ci
+      id: test
+      timeout-minutes: 90
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... --config=ci \
+          --profile="$RUNNER_TEMP/bazel-profile.json" \
+          --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+          2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo >> "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
       # pr.yml's build-artifacts job, built by Bazel: the same artifact name
       # and layout (bd-linux-gms-pure, SHA256SUMS, build-manifest.txt), so its
       # consumers (PR Core, domain+uow, the package gates) can switch to it.
       # None does yet. The script documents which binary and how it differs
       # from `go build`'s.
-      - name: Package bd (ci-build-artifacts layout)
-        id: bd-artifact
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: ./scripts/ci/package-bazel-bd.sh "$RUNNER_TEMP/bd-artifacts"
+    - name: Package bd (ci-build-artifacts layout)
+      id: bd-artifact
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: ./scripts/ci/package-bazel-bd.sh "$RUNNER_TEMP/bd-artifacts"
 
-      - name: Upload build artifacts
-        if: ${{ always() && steps.bd-artifact.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: ${{ inputs.build-artifact-name || 'ci-build-artifacts' }}
-          path: ${{ runner.temp }}/bd-artifacts/
-          retention-days: 1
-          if-no-files-found: error
+    - name: Upload build artifacts
+      if: ${{ always() && steps.bd-artifact.outcome == 'success' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: ${{ inputs.build-artifact-name || 'ci-build-artifacts' }}
+        path: ${{ runner.temp }}/bd-artifacts/
+        retention-days: 1
+        if-no-files-found: error
 
-      - name: Critical-path report
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        env:
-          TIER: ${{ steps.tier.outputs.tier }}
-        run: |
-          budget=()
-          if [ "$TIER" != "local" ]; then budget=(--budget "$BAZEL_BUDGET_SECONDS"); fi
-          python3 tools/bazel/critpath.py "$RUNNER_TEMP/bazel-profile.json" \
-            --tier "$TIER" --log "$RUNNER_TEMP/bazel-test.log" "${budget[@]}"
+    - name: Critical-path report
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      env:
+        TIER: ${{ steps.tier.outputs.tier }}
+      run: |
+        budget=()
+        if [ "$TIER" != "local" ]; then budget=(--budget "$BAZEL_BUDGET_SECONDS"); fi
+        python3 tools/bazel/critpath.py "$RUNNER_TEMP/bazel-profile.json" \
+          --tier "$TIER" --log "$RUNNER_TEMP/bazel-test.log" "${budget[@]}"
 
       # nightly.yml's PR Core `go test -json` on the same commit.
-      - name: Download go-test results
-        if: ${{ always() && inputs.go-test-json-artifact != '' && steps.test.outcome != 'skipped' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: ${{ inputs.go-test-json-artifact }}
-          path: ${{ runner.temp }}/go-test-json
+    - name: Download go-test results
+      if: ${{ always() && inputs.go-test-json-artifact != '' && steps.test.outcome != 'skipped' }}
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8
+      with:
+        name: ${{ inputs.go-test-json-artifact }}
+        path: ${{ runner.temp }}/go-test-json
 
       # Fails on any Go test that `go test` runs and Bazel did not (tag filter,
       # manual, missing target, empty shard) unless it is allowlisted. With
@@ -431,17 +432,17 @@ jobs:
       # shares with --config=ci (same output directory): if a job ever runs
       # both lanes, run each lane's equivalence right after its own
       # `bazel test`, before the other lane overwrites the logs.
-      - name: Go test equivalence
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        timeout-minutes: 15
-        env:
-          DETAILS: ${{ inputs.details && '--details' || '' }}
-          GO_TEST_JSON: ${{ inputs.go-test-json-artifact != '' && format('{0}/go-test-json/go-test.json', runner.temp) || '' }}
-        run: |
-          args=()
-          if [ -n "$DETAILS" ]; then args+=("$DETAILS"); fi
-          if [ -n "$GO_TEST_JSON" ]; then args+=(--go-test-json "$GO_TEST_JSON"); fi
-          python3 tools/bazel/equivalence.py --bep "$RUNNER_TEMP/bazel-bep.json" "${args[@]}"
+    - name: Go test equivalence
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      timeout-minutes: 15
+      env:
+        DETAILS: ${{ inputs.details && '--details' || '' }}
+        GO_TEST_JSON: ${{ inputs.go-test-json-artifact != '' && format('{0}/go-test-json/go-test.json', runner.temp) || '' }}
+      run: |
+        args=()
+        if [ -n "$DETAILS" ]; then args+=("$DETAILS"); fi
+        if [ -n "$GO_TEST_JSON" ]; then args+=(--go-test-json "$GO_TEST_JSON"); fi
+        python3 tools/bazel/equivalence.py --bep "$RUNNER_TEMP/bazel-bep.json" "${args[@]}"
 
       # Runs last: it rewrites BUILD files in the checkout. main moves BUILD
       # inputs (imports, go.mod) without touching Bazel, so drift shows up here
@@ -449,76 +450,76 @@ jobs:
       # MODULE.bazel / MODULE.bazel.lock part of the fix is written as a patch
       # for the bazel-sync-patch artifact, which bazel-autofix.yml pushes to
       # same-repo PR branches (or turns into an apply recipe for forks).
-      - name: BUILD files in sync (gazelle, go_srcs, MODULE.bazel)
-        id: sync
-        if: ${{ always() && steps.bazel.outcome == 'success' }}
-        timeout-minutes: 15
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          start=$(date +%s)
-          # A stale go_srcs block is drift like any other: record it, then let
-          # bazel-sync fix it so the patch covers it too.
-          check=0
-          make bazel-sync-check || check=$?
-          make bazel-sync
-          drift="$(git status --porcelain --untracked-files=all)"
-          echo "BUILD sync check: $(( $(date +%s) - start ))s" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$drift" ]; then
-            echo "::error title=Bazel BUILD files out of sync::run 'make bazel-sync' and commit the result"
-            echo "$drift"
-            git diff | head -200
-            echo "BUILD files **out of sync**; run \`make bazel-sync\` and commit the result." >> "$GITHUB_STEP_SUMMARY"
-            ./scripts/ci/bazel-sync-patch.sh "$RUNNER_TEMP/bazel-sync-patch"
-            exit 1
-          fi
-          exit "$check"
+    - name: BUILD files in sync (gazelle, go_srcs, MODULE.bazel)
+      id: sync
+      if: ${{ always() && steps.bazel.outcome == 'success' }}
+      timeout-minutes: 15
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        start=$(date +%s)
+        # A stale go_srcs block is drift like any other: record it, then let
+        # bazel-sync fix it so the patch covers it too.
+        check=0
+        make bazel-sync-check || check=$?
+        make bazel-sync
+        drift="$(git status --porcelain --untracked-files=all)"
+        echo "BUILD sync check: $(( $(date +%s) - start ))s" >> "$GITHUB_STEP_SUMMARY"
+        if [ -n "$drift" ]; then
+          echo "::error title=Bazel BUILD files out of sync::run 'make bazel-sync' and commit the result"
+          echo "$drift"
+          git diff | head -200
+          echo "BUILD files **out of sync**; run \`make bazel-sync\` and commit the result." >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/ci/bazel-sync-patch.sh "$RUNNER_TEMP/bazel-sync-patch"
+          exit 1
+        fi
+        exit "$check"
 
       # Data only: bazel-autofix.yml validates every path before applying it.
       # Not from bazel-farm.yml's pull_request_target runs: autofix reads only
       # "PR" runs, and a trusted-fork run publishes nothing meant for a
       # privileged consumer.
-      - name: Upload BUILD sync patch
-        if: ${{ always() && steps.sync.outcome == 'failure' && github.event_name != 'pull_request_target' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-sync-patch
-          path: ${{ runner.temp }}/bazel-sync-patch/
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload BUILD sync patch
+      if: ${{ always() && steps.sync.outcome == 'failure' && github.event_name != 'pull_request_target' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-sync-patch
+        path: ${{ runner.temp }}/bazel-sync-patch/
+        if-no-files-found: ignore
+        retention-days: 7
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome == 'failure' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Only a push to main that missed the exact key writes the runner cache.
       # Its content (--repository_cache only, never the rc
       # or credentials) is fixed by .bazelversion and MODULE.bazel.lock, so one
       # entry per lock is enough and later pushes do not churn the quota.
-      - name: Save Bazel runner cache
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bazel.outcome == 'success' && steps.bazel.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/bazel-ci-cache
-          key: bazel-repo-v3-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock') }}
+    - name: Save Bazel runner cache
+      if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bazel.outcome == 'success' && steps.bazel.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
+      with:
+        path: ${{ runner.temp }}/bazel-ci-cache
+        key: bazel-repo-v3-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock') }}
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # pr.yml's check-cmd-bd-puregeo-tests job ("Check pure-Go and js/wasm
   # boundaries (CGO_ENABLED=0)") with Bazel-built binaries: --config=pure
@@ -542,85 +543,85 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
       # Only for go_js_wasm_exec and wasm_exec_node.js, which must match the
       # Go version Bazel compiles with (go.mod's; policy-tested).
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: 'go.mod'
-          cache: false
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
+      with:
+        go-version-file: 'go.mod'
+        cache: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: '24'
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # v6
+      with:
+        node-version: '24'
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
-      - name: Run js/wasm hook boundary
-        run: |
-          set -euo pipefail
-          bazel build --config=js-wasm //internal/hooks:hooks_test
-          bin="$(bazel cquery --config=js-wasm --output=files //internal/hooks:hooks_test)"
-          cd internal/hooks
+    - name: Run js/wasm hook boundary
+      run: |
+        set -euo pipefail
+        bazel build --config=js-wasm //internal/hooks:hooks_test
+        bin="$(bazel cquery --config=js-wasm --output=files //internal/hooks:hooks_test)"
+        cd internal/hooks
 
-          # Same selector and count guard as pr.yml's job.
-          test_status=0
-          # wasm_exec.js caps argv+env size; the Blacksmith runner's environment
-          # exceeds it, so run with only what the hook test needs.
-          wasm_exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec"
-          test_output="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
-            BD_DISABLE_METRICS=1 BD_DISABLE_EVENT_FLUSH=1 \
-            "$wasm_exec" "$GITHUB_WORKSPACE/$bin" \
-            -test.run '^TestRunHookReportsUnsupportedExecution$' \
-            -test.v 2>&1)" || test_status=$?
-          printf '%s\n' "$test_output"
-          (( test_status == 0 )) || exit "$test_status"
+        # Same selector and count guard as pr.yml's job.
+        test_status=0
+        # wasm_exec.js caps argv+env size; the Blacksmith runner's environment
+        # exceeds it, so run with only what the hook test needs.
+        wasm_exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec"
+        test_output="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+          BD_DISABLE_METRICS=1 BD_DISABLE_EVENT_FLUSH=1 \
+          "$wasm_exec" "$GITHUB_WORKSPACE/$bin" \
+          -test.run '^TestRunHookReportsUnsupportedExecution$' \
+          -test.v 2>&1)" || test_status=$?
+        printf '%s\n' "$test_output"
+        (( test_status == 0 )) || exit "$test_status"
 
-          run_count=0
-          pass_count=0
-          nonpass_count=0
-          pass_pattern='^--- PASS: TestRunHookReportsUnsupportedExecution \([0-9.]+s\)$'
-          nonpass_pattern='^[[:space:]]*--- (FAIL|SKIP): '
-          while IFS= read -r line; do
-            if [[ "$line" == "=== RUN   TestRunHookReportsUnsupportedExecution" ]]; then
-              ((run_count += 1))
-            fi
-            if [[ "$line" =~ $pass_pattern ]]; then
-              ((pass_count += 1))
-            fi
-            if [[ "$line" =~ $nonpass_pattern ]]; then
-              ((nonpass_count += 1))
-            fi
-          done <<< "$test_output"
-          if (( run_count != 1 || pass_count != 1 || nonpass_count != 0 )); then
-            printf 'expected one exact js/wasm hook test run and pass with no failures or skips; got runs=%s passes=%s nonpasses=%s\n' \
-              "$run_count" "$pass_count" "$nonpass_count" >&2
-            exit 1
+        run_count=0
+        pass_count=0
+        nonpass_count=0
+        pass_pattern='^--- PASS: TestRunHookReportsUnsupportedExecution \([0-9.]+s\)$'
+        nonpass_pattern='^[[:space:]]*--- (FAIL|SKIP): '
+        while IFS= read -r line; do
+          if [[ "$line" == "=== RUN   TestRunHookReportsUnsupportedExecution" ]]; then
+            ((run_count += 1))
           fi
+          if [[ "$line" =~ $pass_pattern ]]; then
+            ((pass_count += 1))
+          fi
+          if [[ "$line" =~ $nonpass_pattern ]]; then
+            ((nonpass_count += 1))
+          fi
+        done <<< "$test_output"
+        if (( run_count != 1 || pass_count != 1 || nonpass_count != 0 )); then
+          printf 'expected one exact js/wasm hook test run and pass with no failures or skips; got runs=%s passes=%s nonpasses=%s\n' \
+            "$run_count" "$pass_count" "$nonpass_count" >&2
+          exit 1
+        fi
 
-      - name: Build cmd/bd and pure-Go test binaries (--config=pure)
-        run: >-
-          bazel build --config=pure
-          //cmd/bd:bd
-          //cmd/bd:bd_test
-          //internal/storage/embeddeddolt:embeddeddolt_test
-          //internal/tracker:tracker_test
+    - name: Build cmd/bd and pure-Go test binaries (--config=pure)
+      run: >-
+        bazel build --config=pure
+        //cmd/bd:bd
+        //cmd/bd:bd_test
+        //internal/storage/embeddeddolt:embeddeddolt_test
+        //internal/tracker:tracker_test
 
       # `go build` with CGO_ENABLED=0 rejects a pure binary whose imports reach
       # dolt's cgo-only store/nbs (gozstd). Bazel compiles gozstd's pure stubs
@@ -628,38 +629,38 @@ jobs:
       # the check happens here: every pure artifact is started once. bd_test
       # starts in the next step. -test.run=^$ runs no test (TestMain still
       # runs; BEADS_TEST_SKIP=dolt keeps tracker's from starting a container).
-      - name: Start every pure-Go artifact (gozstd contamination check)
-        run: |
-          set -euo pipefail
-          bazel run --config=pure //cmd/bd:bd -- version
-          bazel test --config=pure \
-            //internal/storage/embeddeddolt:embeddeddolt_test \
-            //internal/tracker:tracker_test \
-            --test_sharding_strategy=disabled \
-            '--test_arg=-test.run=^$' \
-            --test_env=BEADS_TEST_SKIP=dolt
+    - name: Start every pure-Go artifact (gozstd contamination check)
+      run: |
+        set -euo pipefail
+        bazel run --config=pure //cmd/bd:bd -- version
+        bazel test --config=pure \
+          //internal/storage/embeddeddolt:embeddeddolt_test \
+          //internal/tracker:tracker_test \
+          --test_sharding_strategy=disabled \
+          '--test_arg=-test.run=^$' \
+          --test_env=BEADS_TEST_SKIP=dolt
 
       # One unsharded process, like `go test -run`; the test.xml check keeps a
       # selector that matches nothing from passing.
-      - name: Run pure-Go cmd/bd test subset (--config=pure)
-        run: |
-          set -euo pipefail
-          bazel test --config=pure //cmd/bd:bd_test \
-            --test_sharding_strategy=disabled \
-            "--test_arg=-test.run=$PURE_CMD_BD_TESTS"
-          n="$(grep -c '<testcase ' bazel-testlogs/cmd/bd/bd_test/test.xml || true)"
-          echo "pure cmd/bd subset: $n test cases"
-          (( n > 0 ))
+    - name: Run pure-Go cmd/bd test subset (--config=pure)
+      run: |
+        set -euo pipefail
+        bazel test --config=pure //cmd/bd:bd_test \
+          --test_sharding_strategy=disabled \
+          "--test_arg=-test.run=$PURE_CMD_BD_TESTS"
+        n="$(grep -c '<testcase ' bazel-testlogs/cmd/bd/bd_test/test.xml || true)"
+        echo "pure cmd/bd subset: $n test cases"
+        (( n > 0 ))
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # pr-risk.yml's embedded-Dolt tier ("Test (Embedded Dolt Cmd N/20)",
   # "Test (Embedded Dolt Storage N/5)", "Test (Embedded Dolt Conformance -
@@ -692,55 +693,55 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # Bazel retries a flaky = True test (up to three attempts) and reports a
       # later pass as PASSED. The policy test greps BUILD files for it; this
       # asks Bazel itself, so a macro or a variable cannot hide one. Cheap:
       # loading only, with the repository cache the test step needs anyway.
-      - name: No test target is marked flaky
-        run: |
-          flaky="$(bazel query 'attr(flaky, 1, tests(//...))')"
-          if [ -n "$flaky" ]; then
-            echo "::error::flaky = True on ${flaky//$'\n'/ }: the gated lanes run each test once"
-            exit 1
-          fi
+    - name: No test target is marked flaky
+      run: |
+        flaky="$(bazel query 'attr(flaky, 1, tests(//...))')"
+        if [ -n "$flaky" ]; then
+          echo "::error::flaky = True on ${flaky//$'\n'/ }: the gated lanes run each test once"
+          exit 1
+        fi
 
       # --build_event_json_file is a command option, so it goes after `test`.
-      - name: bazel test //... --config=embedded
-        id: test
-        timeout-minutes: 50
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... --config=embedded \
-            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
-            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test --config=embedded: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=embedded
+      id: test
+      timeout-minutes: 50
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... --config=embedded \
+          --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+          2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test --config=embedded: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
       # A shard the manifest assigns nothing, or a selector that matches
       # nothing, exits 0: fail if any target's or shard's test.xml lists no
       # tests (or is missing).
-      - name: Every target and shard ran tests
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
+    - name: Every target and shard ran tests
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
 
       # Since D2 step 1 this lane is the tier's only pre-merge run on
       # same-repo PRs. The shard scripts discover tests from source, but each
@@ -750,36 +751,36 @@ jobs:
       # and unless every shard and conformance partition ran at least one
       # top-level test that was not skipped (an injected -test.short or
       # BEADS_TEST_SKIP turns the tier into t.Skip calls).
-      - name: Every listed test ran in its shard
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: >-
-          python3 tools/bazel/check_shard_coverage.py
-          --bep "$RUNNER_TEMP/bazel-bep.json"
-          --suite //cmd/bd:bd_embedded_test .github/scripts/embedded-test-shard.sh 20
-          --suite //internal/storage/embeddeddolt:embeddeddolt_embedded_test .github/scripts/embedded-storage-test-shard.sh 5
-          --whole //internal/storage/embeddeddolt:embeddeddolt_conformance_core_test
-          --whole //internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test
+    - name: Every listed test ran in its shard
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: >-
+        python3 tools/bazel/check_shard_coverage.py
+        --bep "$RUNNER_TEMP/bazel-bep.json"
+        --suite //cmd/bd:bd_embedded_test .github/scripts/embedded-test-shard.sh 20
+        --suite //internal/storage/embeddeddolt:embeddeddolt_embedded_test .github/scripts/embedded-storage-test-shard.sh 5
+        --whole //internal/storage/embeddeddolt:embeddeddolt_conformance_core_test
+        --whole //internal/storage/embeddeddolt:embeddeddolt_conformance_audit_test
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome != 'skipped' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-embedded-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome != 'skipped' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-embedded-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # main.yml's "Main Linux integration packages (N/6)" and "Main Linux
   # integration cmd/bd (N/8)" jobs (nightly.yml's Full Test Suite runs the
@@ -811,67 +812,67 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # Remote: a cold compile (a PR touching a widely imported package; the
       # first cold run took 17 minutes end to end, warm ones ~3.5) plus the
       # longest test action (1200s cap, see .bazelrc) if it starts last.
       # scripts/ci_workflow_test.go keeps this at or above that sum.
-      - name: bazel test //... --config=integration
-        id: test
-        timeout-minutes: 45
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... --config=integration \
-            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
-            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test --config=integration: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=integration
+      id: test
+      timeout-minutes: 45
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... --config=integration \
+          --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+          2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test --config=integration: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
       # As in bazel-embedded. dolt_version_test is a plain sh_test (no Go
       # testcases in its test.xml), which --config=integration's tag filter
       # keeps, unlike the embedded one.
-      - name: Every target and shard ran tests
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json" --not-go //tools/bazel:dolt_version_test
+    - name: Every target and shard ran tests
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json" --not-go //tools/bazel:dolt_version_test
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome != 'skipped' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-integration-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome != 'skipped' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-integration-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # pr.yml's container-backed jobs, "Test (storage domain + uow)" and
   # "Contract corpus", as Bazel's dolt-server lane: --config=doltserver runs
@@ -896,60 +897,60 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # Docker lane only (the A/B control), as in the mirrored jobs; its
       # tests fail rather than skip without the image.
-      - name: Pull Dolt sql-server image
-        if: ${{ env.BAZEL_DOLT_LANE == 'docker' }}
-        run: ./scripts/ci/pull-dolt-image.sh
+    - name: Pull Dolt sql-server image
+      if: ${{ env.BAZEL_DOLT_LANE == 'docker' }}
+      run: ./scripts/ci/pull-dolt-image.sh
 
-      - name: bazel test //... --config=doltserver
-        id: test
-        timeout-minutes: 80
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... "--config=$BAZEL_DOLT_LANE" 2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test --config=$BAZEL_DOLT_LANE: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=doltserver
+      id: test
+      timeout-minutes: 80
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... "--config=$BAZEL_DOLT_LANE" 2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test --config=$BAZEL_DOLT_LANE: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-${{ env.BAZEL_DOLT_LANE }}-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome == 'failure' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-${{ env.BAZEL_DOLT_LANE }}-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # pr-risk.yml's proxied-server tier, "Test (Proxied Dolt Cmd N/15)", as
   # --config=doltserver-proxied: //cmd/bd:bd_proxied_test runs the job's
@@ -975,63 +976,63 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # Remote: the longest shard takes ~5-8 minutes (each shard's Go
       # timeout is its job's 15m, 1200s Bazel cap), plus a compile.
-      - name: bazel test //... --config=doltserver-proxied
-        id: test
-        timeout-minutes: 25
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... --config=doltserver-proxied \
-            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
-            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test --config=doltserver-proxied: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=doltserver-proxied
+      id: test
+      timeout-minutes: 25
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... --config=doltserver-proxied \
+          --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+          2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test --config=doltserver-proxied: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
       # As in bazel-embedded.
-      - name: Every target and shard ran tests
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
+    - name: Every target and shard ran tests
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome != 'skipped' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-proxied-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome != 'skipped' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-proxied-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
 
   # pr-risk.yml's server-Dolt storage tier, "Test (Server Dolt Conformance)"
   # and "Test (Server Dolt Full Suite N/16)", as --config=doltserver-integration:
@@ -1057,60 +1058,60 @@ jobs:
       # inputs.checkout-sha: see the header (empty: the event's default ref).
       # checkout v7 refuses a fork head on pull_request_target unless opted
       # in; only bazel-farm.yml's authorized call opts in (false elsewhere).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout-sha }}
-          persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      with:
+        ref: ${{ inputs.checkout-sha }}
+        persist-credentials: false
+        allow-unsafe-pr-checkout: ${{ inputs.fork-farm == 'authorized' && github.event_name == 'pull_request_target' }}
 
-      - name: Set up Bazel
-        id: bazel
-        uses: ./.github/actions/setup-bazel
-        env:
-          BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
-          RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
-          RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
-          RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
-          RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
-          BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
+    - name: Set up Bazel
+      id: bazel
+      uses: ./.github/actions/setup-bazel
+      env:
+        BAZEL_REMOTE_EXECUTOR: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_WEST_EXECUTOR || '' }}
+        RBE_TLS_CERT: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CERT || '' }}
+        RBE_TLS_KEY: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_KEY || '' }}
+        RBE_TLS_CA: ${{ needs.rbe.outputs.enabled == 'true' && secrets.RBE_TLS_CA || '' }}
+        RBE_INSTANCE: ${{ needs.rbe.outputs.enabled == 'true' && 'oss' || '' }}
+        BAZEL_FORK_CACHE: ${{ needs.rbe.outputs.mode == 'cache' && 'true' || '' }}
 
       # Remote: the longest shard takes ~2-3 minutes (the storage suite's Go
       # timeout is 15m per shard, 1200s Bazel cap), plus a compile.
-      - name: bazel test //... --config=doltserver-integration
-        id: test
-        timeout-minutes: 25
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          rc=0
-          bazel test //... --config=doltserver-integration \
-            --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
-            2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
-          echo "bazel test --config=doltserver-integration: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+    - name: bazel test //... --config=doltserver-integration
+      id: test
+      timeout-minutes: 25
+      run: |
+        set -o pipefail
+        start=$(date +%s)
+        rc=0
+        bazel test //... --config=doltserver-integration \
+          --build_event_json_file="$RUNNER_TEMP/bazel-bep.json" \
+          2>&1 | tee "$RUNNER_TEMP/bazel-test.log" || rc=$?
+        echo "bazel test --config=doltserver-integration: exit $rc, $(( $(date +%s) - start ))s wall" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
 
       # As in bazel-embedded.
-      - name: Every target and shard ran tests
-        if: ${{ always() && steps.test.outcome != 'skipped' }}
-        run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
+    - name: Every target and shard ran tests
+      if: ${{ always() && steps.test.outcome != 'skipped' }}
+      run: python3 tools/bazel/check_testcases.py --bep "$RUNNER_TEMP/bazel-bep.json"
 
-      - name: Upload test logs
-        if: ${{ failure() && steps.test.outcome != 'skipped' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bazel-server-storage-testlogs
-          path: |
-            bazel-testlogs/**/test.log
-            bazel-testlogs/**/test.xml
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload test logs
+      if: ${{ failure() && steps.test.outcome != 'skipped' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7
+      with:
+        name: bazel-server-storage-testlogs
+        path: |
+          bazel-testlogs/**/test.log
+          bazel-testlogs/**/test.xml
+        if-no-files-found: ignore
+        retention-days: 7
 
       # Last step: the job's result as a workflow_call output for pr.yml's
       # ci-gate. always() runs it after a failure, a timeout or a
       # cancellation too.
-      - name: Record job result
-        id: result
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
+    - name: Record job result
+      id: result
+      if: ${{ always() }}
+      env:
+        JOB_STATUS: ${{ job.status }}
+      run: echo "result=$JOB_STATUS" >> "$GITHUB_OUTPUT"
