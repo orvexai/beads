@@ -5,8 +5,7 @@ name: Conformance
 
 on:
   pull_request:
-    branches: [ main, 'release/**' ]
-  merge_group:
+    branches: [main, 'release/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -22,12 +21,12 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v6
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: 'go.mod'
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7.0.0
+      with:
+        go-version-file: 'go.mod'
 
-      - name: Run conformance (embedded Dolt oracle)
-        run: ./scripts/conformance.sh
+    - name: Run conformance (embedded Dolt oracle)
+      run: ./scripts/conformance.sh
