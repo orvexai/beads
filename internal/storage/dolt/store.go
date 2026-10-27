@@ -1938,13 +1938,13 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	var addr string
 	var conn net.Conn
 	var dialErr error
+	var probeAttempts int
 	if cfg.ServerSocket != "" {
 		addr = cfg.ServerSocket
-		conn, dialErr = net.DialTimeout("unix", cfg.ServerSocket, 500*time.Millisecond)
 	} else {
 		addr = net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
-		conn, dialErr = net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	}
+	conn, probeAttempts, dialErr = probeConnect(cfg)
 	if dialErr != nil {
 		// Auto-start: if enabled and connecting locally via TCP, start a server.
 		// Socket mode is excluded — auto-start creates a TCP listener, not a
@@ -1971,10 +1971,10 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			}
 			port, startedByUs, startErr := ensureRunningDetailed(resolvedBeadsDir)
 			if startErr != nil {
-				return nil, fmt.Errorf("Dolt server unreachable at %s and auto-start failed: %w\n\n"+
+				return nil, fmt.Errorf("Dolt server unreachable at %s (after %d attempts) and auto-start failed: %w\n\n"+
 					"To start manually: bd dolt start\n"+
 					"To disable auto-start: set dolt.auto-start: false in .beads/config.yaml",
-					addr, startErr)
+					addr, probeAttempts, startErr)
 			}
 			// Only tests should stop auto-started servers on Close(). In normal
 			// repo-local server mode, leaving the server up avoids endpoint churn
@@ -2089,8 +2089,7 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			} else {
 				hint = "The Dolt server may not be running. Try:\n  bd dolt start"
 			}
-			return nil, fmt.Errorf("Dolt server unreachable at %s: %w\n\n%s",
-				addr, dialErr, hint)
+			return nil, fmt.Errorf("%w\n\n%s", connectProbeError(addr, probeAttempts, dialErr), hint)
 		}
 	}
 	// Drain the MySQL handshake before closing so Close() sends FIN, not RST
