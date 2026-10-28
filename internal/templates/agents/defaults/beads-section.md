@@ -99,8 +99,8 @@ For more details, see README.md and https://github.com/gastownhall/beads/blob/ma
 
 The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
 
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
+- **Conservative (default)**: Use `bd` for task tracking. Do not run Dolt remote sync unless explicitly asked. Git commits and pushes are governed by your repository, role and orchestrator instructions; this block does not restrict them. At handoff, report changed files, validation, and suggested next commands.
+- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same Dolt remote sync policy as conservative.
 - **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
 
 ## Session Completion
@@ -112,7 +112,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 3. **Update issue status** - Close finished work, update in-progress items
 4. **Handle git/sync by active profile**:
    ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
+   # Conservative/minimal/default: report status and suggested next commands; run Dolt remote sync only when asked. Git commits and pushes follow your repository, role and orchestrator instructions.
    git status
 
    # Team-maintainer opt-in only, unless current instructions forbid it:
@@ -125,7 +125,8 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 **Critical rules:**
 - Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
+- Git commits and pushes are governed by your repository, role and orchestrator instructions; this block does not restrict them. Never force-push and never use --no-verify.
+- Run Beads/Dolt remote sync only with authority from the active profile or the current user request.
 - If a required sync or push is blocked, stop and report the exact command and error.
 
 <!-- END BEADS INTEGRATION -->

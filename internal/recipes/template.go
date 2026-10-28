@@ -13,9 +13,9 @@ This project uses [Beads (bd)](https://github.com/gastownhall/beads) for issue t
 - Track ALL work in bd (never use markdown TODOs or comment-based task lists)
 - Use ` + "`bd ready`" + ` to find available work
 - Use ` + "`bd create`" + ` to track new issues/tasks/bugs
-- Treat commit, push, and Dolt remote sync as policy-controlled handoff actions
+- Treat Dolt remote sync as a policy-controlled handoff action
 - Run ` + "`bd prime`" + ` for complete workflow context (SSOT for operational commands)
-- Default to conservative git authority: report status and proposed commands unless the user, orchestrator, or repository profile explicitly authorizes commit/sync/push
+- Dolt remote sync only on explicit authority; git commits and pushes are governed by your repository, role and orchestrator instructions, and this note does not restrict them
 
 ## Quick Reference
 
@@ -76,7 +76,7 @@ This repository uses **Beads (bd)** for issue tracking.
 - Use ` + "`bd create`" + ` to track new work
 - Use ` + "`bd update <id> --claim`" + ` before starting
 - Use ` + "`bd close <id>`" + ` when work is complete
-- Treat commit, push, and Dolt remote sync as policy-controlled handoff actions
+- Treat Dolt remote sync as a policy-controlled handoff action
 - Do not commit, push, or run Dolt remote sync unless explicitly authorized
 
 ## Context Loading

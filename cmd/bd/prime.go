@@ -786,9 +786,10 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 	var closeProtocol string
 	var profileRule string
 	if stealthMode {
-		// Stealth mode is an explicit no-git context.
+		// Stealth mode limits what bd itself does (flush only); it does not
+		// restrict git operations the agent is otherwise authorised to run.
 		closeProtocol = "Before saying \"done\": bd close <completed-ids>"
-		profileRule = "Git authority: no git operations in this context"
+		profileRule = "Git authority: bd does no git or remote sync in stealth mode; repository, role and orchestrator instructions govern git operations"
 	} else if localOnly {
 		if primeAgentProfile() == config.ProfileTeamMaintainer {
 			closeProtocol = "Before saying \"done\": bd close <completed-ids>; run checks; run git status and commit local changes as routine work (agent.profile=team-maintainer); do not push, pull, or run remote sync."
@@ -816,7 +817,7 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 		profileRule = "Profile: team-maintainer active (agent.profile=team-maintainer) - commit, sync, and push are routine; explicit no-commit/no-push instructions still override."
 	} else {
 		closeProtocol = "Before saying \"done\": bd close <completed-ids>; run checks. Then follow the active profile — conservative reports handoff; team-maintainer may commit/sync/push when explicitly enabled."
-		profileRule = "Default: do not commit, push, or run dolt remote sync without explicit authority. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
+		profileRule = "Default: run dolt remote sync only with explicit authority. Git commits and pushes are governed by repository, role and orchestrator instructions; this does not restrict them. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
 	}
 
 	redirectNotice := getRedirectNotice(false)
@@ -871,7 +872,8 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 	var profileRule string
 
 	if stealthMode {
-		// Stealth mode is an explicit no-git context.
+		// Stealth mode limits what bd itself does (flush only); it does not
+		// restrict git operations the agent is otherwise authorised to run.
 		closeProtocol = `[ ] bd close <id1> <id2> ...   (close completed issues)`
 		syncSection = `### Sync & Collaboration
 - ` + "`bd search <query>`" + ` - Search issues by keyword`
@@ -879,8 +881,8 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
 ` + "```"
-		gitWorkflowRule = "Git workflow: stealth mode (no git ops)"
-		profileRule = "Git authority: no git operations in this context"
+		gitWorkflowRule = "Git workflow: stealth mode (bd itself does no git ops; git follows repository, role and orchestrator instructions)"
+		profileRule = "Git authority: bd does no git or remote sync in stealth mode; repository, role and orchestrator instructions govern git operations"
 	} else if localOnly {
 		closeNote = "**Note:** No git remote configured. Do not push, pull, or run remote sync. Local git operations follow active user, orchestrator, and repository authority."
 		syncSection = `### Sync & Collaboration
@@ -983,7 +985,7 @@ git add . && git commit -m "..."
 [ ] 2. run quality gates        (tests, linters, builds when relevant)
 [ ] 3. git status               (check what changed)
 [ ] 4. follow active profile    (conservative: report handoff; team-maintainer: commit/sync/push if enabled)`
-		closeNote = "**Policy:** Conservative is the default. Commit, sync, or push only when the active user, orchestrator, or repository profile grants that authority."
+		closeNote = "**Policy:** Conservative is the default for Dolt remote sync. Git commits and pushes are governed by your repository, role and orchestrator instructions; this note does not restrict them."
 		syncSection = "### Sync & Collaboration\n" +
 			primeDoltSyncBullets(doltSync, true) +
 			"- `bd search <query>` - Search issues by keyword"
@@ -995,13 +997,13 @@ git add . && git commit -m "..."
 ` + "```bash" + `
 bd close <id1> <id2> ...    # Close all completed issues at once
 git status                  # Check changed files
-# Conservative/minimal/default: report status and proposed commands; wait for approval
+# Conservative/minimal/default: report status and suggested next commands; Dolt remote sync only when asked. Git commits and pushes follow repository, role and orchestrator instructions
 # Team-maintainer opt-in only, unless current instructions forbid it:
 # git add . && git commit -m "..."
 ` + doltPushComment + `# git push
 ` + "```"
-		gitWorkflowRule = "Git workflow: conservative by default; commit/push only with explicit user/orchestrator or team-maintainer authority"
-		profileRule = "Default: do not commit, push, or run dolt remote sync without explicit authority. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
+		gitWorkflowRule = "Git workflow: Dolt sync conservative by default; git commits and pushes follow repository, role and orchestrator instructions"
+		profileRule = "Default: run dolt remote sync only with explicit authority. Git commits and pushes are governed by repository, role and orchestrator instructions; this does not restrict them. Team-maintainer behavior is opt-in and still subordinate to user/orchestrator instructions."
 	}
 
 	redirectNotice := getRedirectNotice(true)

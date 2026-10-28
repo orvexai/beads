@@ -113,7 +113,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   true,
 			ephemeralMode: false, // stealth mode overrides ephemeral detection
 			localOnlyMode: false,
-			expectText:    []string{"Beads Workflow Context", "bd close", "Git authority: no git operations in this context"},
+			expectText:    []string{"Beads Workflow Context", "bd close", "Git authority: bd does no git or remote sync in stealth mode"},
 			rejectText:    []string{"git push", "git pull", "git commit", "git status", "git add", "bd export", "No git remote configured", "Git authority: local-only/no-remote"},
 		},
 		{
@@ -123,7 +123,7 @@ func TestOutputContextFunction(t *testing.T) {
 			ephemeralMode: false,
 			localOnlyMode: true,
 			expectText:    []string{"Beads Workflow Context", "bd close", "No git remote configured", "Do not push, pull, or run remote sync", "Local git operations follow active user, orchestrator, and repository authority", "Git authority: local-only/no-remote", "git status"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "bd export", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "bd export", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "CLI Local-only team-maintainer profile",
@@ -133,7 +133,7 @@ func TestOutputContextFunction(t *testing.T) {
 			localOnlyMode: true,
 			profile:       config.ProfileTeamMaintainer,
 			expectText:    []string{"Beads Workflow Context", "Git authority: local-only/no-remote", "agent.profile=team-maintainer", "git commit"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "wait for authority", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "wait for authority", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "CLI Local-only overrides ephemeral",
@@ -142,7 +142,7 @@ func TestOutputContextFunction(t *testing.T) {
 			ephemeralMode: true, // ephemeral is true but local-only takes precedence
 			localOnlyMode: true,
 			expectText:    []string{"Beads Workflow Context", "bd close", "No git remote configured", "Do not push, pull, or run remote sync", "Local git operations follow active user, orchestrator, and repository authority", "Git authority: local-only/no-remote", "git status"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "ephemeral branch", "bd export", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "ephemeral branch", "bd export", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "CLI Stealth overrides local-only",
@@ -150,7 +150,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   true,
 			ephemeralMode: false,
 			localOnlyMode: true, // local-only is true but stealth takes precedence
-			expectText:    []string{"Beads Workflow Context", "bd close", "Git authority: no git operations in this context"},
+			expectText:    []string{"Beads Workflow Context", "bd close", "Git authority: bd does no git or remote sync in stealth mode"},
 			rejectText:    []string{"git push", "git pull", "git commit", "git status", "git add", "No git remote configured", "Git authority: local-only/no-remote", "bd export"},
 		},
 		{
@@ -197,7 +197,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   true,
 			ephemeralMode: false, // stealth mode overrides ephemeral detection
 			localOnlyMode: false,
-			expectText:    []string{"Beads Issue Tracker Active", "bd close", "Git authority: no git operations in this context"},
+			expectText:    []string{"Beads Issue Tracker Active", "bd close", "Git authority: bd does no git or remote sync in stealth mode"},
 			rejectText:    []string{"git push", "git pull", "git commit", "git status", "git add", "bd export", "No git remote configured", "Git authority: local-only/no-remote"},
 		},
 		{
@@ -207,7 +207,7 @@ func TestOutputContextFunction(t *testing.T) {
 			ephemeralMode: false,
 			localOnlyMode: true,
 			expectText:    []string{"Beads Issue Tracker Active", "bd close", "No git remote configured", "Do not push, pull, or run remote sync", "Local git operations follow active user, orchestrator, and repository authority", "Git authority: local-only/no-remote", "git status"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "bd export", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "bd export", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "MCP Local-only team-maintainer profile",
@@ -217,7 +217,7 @@ func TestOutputContextFunction(t *testing.T) {
 			localOnlyMode: true,
 			profile:       config.ProfileTeamMaintainer,
 			expectText:    []string{"Beads Issue Tracker Active", "Git authority: local-only/no-remote", "No git remote configured", "agent.profile=team-maintainer", "commit local changes"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "proposed handoff", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "proposed handoff", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "MCP Local-only overrides ephemeral",
@@ -226,7 +226,7 @@ func TestOutputContextFunction(t *testing.T) {
 			ephemeralMode: true, // ephemeral is true but local-only takes precedence
 			localOnlyMode: true,
 			expectText:    []string{"Beads Issue Tracker Active", "bd close", "No git remote configured", "Do not push, pull, or run remote sync", "Local git operations follow active user, orchestrator, and repository authority", "Git authority: local-only/no-remote", "git status"},
-			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "ephemeral branch", "bd export", "Git authority: no git operations in this context"},
+			rejectText:    []string{"git push", "git pull", "bd dolt push", "bd dolt pull", "--from-main", "ephemeral branch", "bd export", "Git authority: bd does no git or remote sync in stealth mode"},
 		},
 		{
 			name:          "MCP Stealth overrides local-only",
@@ -234,7 +234,7 @@ func TestOutputContextFunction(t *testing.T) {
 			stealthMode:   true,
 			ephemeralMode: false,
 			localOnlyMode: true, // local-only is true but stealth takes precedence
-			expectText:    []string{"Beads Issue Tracker Active", "bd close", "Git authority: no git operations in this context"},
+			expectText:    []string{"Beads Issue Tracker Active", "bd close", "Git authority: bd does no git or remote sync in stealth mode"},
 			rejectText:    []string{"git push", "git pull", "git commit", "git status", "git add", "bd export", "Git authority: local-only/no-remote"},
 		},
 		// The following cases pin the two-axis fix (gh#4130, gh#4230 review):
@@ -364,7 +364,7 @@ func TestPrimeLocalOnlyDoesNotClaimNoGitAuthority(t *testing.T) {
 				}
 			}
 			for _, rejected := range []string{
-				"Git authority: no git operations in this context",
+				"Git authority: bd does no git or remote sync in stealth mode",
 				"git push",
 				"git pull",
 				"bd dolt push",

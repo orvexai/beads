@@ -5,6 +5,17 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-10-28
+
+### Fixed
+
+- `bd prime --stealth` no longer prints "no git operations in this context";
+  it says bd itself does no git or remote sync and that git operations follow
+  repository, role and orchestrator instructions. The managed Beads block and
+  `bd prime` default text now scope the conservative rule to Dolt remote sync
+  and say git commits and pushes are governed by repository, role and
+  orchestrator instructions.
+
 ## [1.3.3] - 2026-10-27
 
 ### Fixed
